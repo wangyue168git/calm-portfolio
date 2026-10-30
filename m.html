@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="冷静持仓">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><!-- iOS26: default 模式下 env(safe-area-inset-top) 恒为0, translucent 才如实上报 -->
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="/tailwind.css?v=8">
+<link rel="stylesheet" href="/tailwind.css?v=9">
 <script src="/chart.umd.min.js"></script>
 <script src="/classify.js?v=17"></script>
 <style>
@@ -2030,13 +2030,11 @@ function _ibTime(iso){
     const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
     return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
-let _ibDetailOpen = false;
-let _ibStatus = null;
-function renderIbSync(st){
-    _ibStatus = st;
-    const el = document.getElementById('ibSyncStatus');
-    if (!el) return;
-    if (!st || !st.enabled) { el.classList.add('hidden'); return; }
+let _ibStatus = null;   // IB 那一条(修改持仓里的「场外加数」入口要用)
+const _syncDetailOpen = {};
+// 一个券商一行: 正常只显示「IB 已同步 16:21」; 需要人处理的错误或连续失败超 3 小时 → 橙色「… 同步异常 ›」, 点开看原因; 令牌 30 天内到期在后面提醒
+function _syncLine(st){
+    const L = st.label || st.id || 'IB';
     const okAt = st.lastOkAt ? new Date(st.lastOkAt).getTime() : 0;
     const stale = !okAt || Date.now() - okAt > 3 * 3600 * 1000;
     const fails = [st.confirms, st.positions].filter(r => r && r.at && !r.ok && (r.hard || stale));
@@ -2048,38 +2046,49 @@ function renderIbSync(st){
     const ORANGE = '#f59e0b', RED = '#ef4444';
     let main, color = '', detail = '';
     if (days !== null && days < 0) {
-        main = 'IB 令牌已过期 ›'; color = RED;
-        detail = '自动同步已停止，看板数据不受影响、手动修改照常可用。在 IB 后台重新生成令牌后替换服务器配置。';
+        main = `${L} 令牌已过期 ›`; color = RED;
+        detail = '自动同步已停止，看板数据不受影响、手动修改照常可用。在券商后台重新生成令牌后替换服务器配置。';
     } else if (fails.length) {
-        main = 'IB 同步异常 ›'; color = ORANGE;
+        main = `${L} 同步异常 ›`; color = ORANGE;
         detail = fails.map(r => `${_ibTime(r.at)} ${r.msg}`).join('；') + (okAt ? `。上次成功 ${_ibTime(st.lastOkAt)}` : '') + '。看板数据未被改动。';
     } else {
-        main = okAt ? `IB 已同步 ${_ibTime(st.lastOkAt)}` : 'IB 同步 · 等待首次运行';
+        main = okAt ? `${L} 已同步 ${_ibTime(st.lastOkAt)}` : `${L} 同步 · 等待首次运行`;
     }
-    el.textContent = '';
+    const row = document.createElement('div');
     const m = document.createElement('span');
     m.textContent = main;
     if (color) m.style.color = color;
-    el.appendChild(m);
+    row.appendChild(m);
     if (days !== null && days >= 0 && days <= 30) {
         const t = document.createElement('span');
         t.style.color = ORANGE;
         t.textContent = ` · 令牌剩 ${days} 天`;
-        el.appendChild(t);
+        row.appendChild(t);
     }
     if (detail) {
+        const key = st.id || L;
         const dv = document.createElement('div');
         dv.className = 'mt-1';
         dv.textContent = detail;
-        dv.hidden = !_ibDetailOpen;
-        el.appendChild(dv);
-        el.style.cursor = 'pointer';
-        el.onclick = () => { _ibDetailOpen = !_ibDetailOpen; dv.hidden = !_ibDetailOpen; };
-    } else { el.onclick = null; el.style.cursor = ''; _ibDetailOpen = false; }
+        dv.hidden = !_syncDetailOpen[key];
+        row.appendChild(dv);
+        row.style.cursor = 'pointer';
+        row.onclick = () => { _syncDetailOpen[key] = !_syncDetailOpen[key]; dv.hidden = !_syncDetailOpen[key]; };
+    }
+    return row;
+}
+function renderBrokerSync(list){
+    const all = Array.isArray(list) ? list.filter(s => s && s.enabled) : [];
+    _ibStatus = all.find(s => (s.id || 'ib') === 'ib') || null;
+    const el = document.getElementById('ibSyncStatus');
+    if (!el) return;
+    if (!all.length) { el.classList.add('hidden'); return; }
+    el.textContent = '';
+    all.forEach(st => el.appendChild(_syncLine(st)));
     el.classList.remove('hidden');
 }
 function loadIbSync(){
-    authedFetch('/api/ib-sync', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(renderIbSync).catch(() => {});
+    authedFetch('/api/broker-sync', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(renderBrokerSync).catch(() => {});
 }
 loadIbSync();
 setInterval(loadIbSync, 5 * 60 * 1000);

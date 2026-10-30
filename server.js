@@ -9,6 +9,8 @@ const { classifyLookThroughBucket, configureGroups } = require("./classify");
 const { marketGroupForHolding, marketSession, pollDelayMs } = require("./market-schedule");
 const { canCommitGeneration, evaluateQuoteHealth, quoteKey, serializeFreshness } = require("./quote-health");
 const { createIbSync, shanghaiDay, parseExtras: parseIbExtras } = require("./ib-sync");
+const { buildBrokerSyncs } = require("./brokers");
+const { planImport } = require("./csv-import");
 
 // 给所有 outbound https/http.get 加 timeout → destroy 兜底。
 // 原因: Node 的 timeout 选项只发 'timeout' 事件、不会自动断请求；
@@ -427,7 +429,7 @@ async function getExchangeRate() {
 // ---- 个人规则(plan.json) ----
 const PLAN_FILE = path.join(DATA_DIR, "plan.json");
 const PLAN_EXAMPLE_FILE = path.join(__dirname, "plan.example.json");
-const READ_APIS = new Set(["/plan.json", "/api/portfolio", "/api/history", "/api/data", "/api/journal", "/api/ib-sync"]);
+const READ_APIS = new Set(["/plan.json", "/api/portfolio", "/api/history", "/api/data", "/api/journal", "/api/ib-sync", "/api/broker-sync"]);
 let _planCache = { mtime: -1, file: "", doc: {} };
 function loadPlan() {
   const file = fs.existsSync(PLAN_FILE) ? PLAN_FILE : PLAN_EXAMPLE_FILE;
@@ -628,6 +630,12 @@ const ibSync = createIbSync({
   loadPortfolio, savePortfolio,
   appendTrade: (h, t) => appendTradeToHolding(h, t),
 });
+// 其他券商(长桥 / 自定义适配器): 配置见 brokers/index.js 与 docs/brokers/。未配置时为空, 不影响任何行为
+const otherBrokerSyncs = buildBrokerSyncs({
+  dataDir: DATA_DIR, baseDir: __dirname,
+  deps: { loadPortfolio, savePortfolio, appendTrade: (h, t) => appendTradeToHolding(h, t) },
+});
+const brokerSyncs = [ibSync, ...otherBrokerSyncs].filter((s) => s.configured);
 
 // ---- History tracking ----
 // In-memory history with file persistence as backup
@@ -1230,6 +1238,7 @@ const PUBLIC_STATIC_FILES = {
   "/tailwind.css": ["tailwind.css", "text/css; charset=utf-8"],
   "/chart.umd.min.js": ["chart.umd.min.js", "application/javascript; charset=utf-8"],
   "/classify.js": ["classify.js", "application/javascript; charset=utf-8"],
+  "/csv-import.js": ["csv-import.js", "application/javascript; charset=utf-8"],
   "/sw.js": ["sw.js", "application/javascript; charset=utf-8"],
   "/manifest.json": ["manifest.json", "application/manifest+json; charset=utf-8"],
   "/favicon.ico": ["favicon.ico", "image/x-icon"],
@@ -1511,6 +1520,14 @@ const server = http.createServer((req, res) => {
     return;
   }
   // API: 一次性处理 IB 场外加数(看板某只股票另含 IB 之外的股数): 卖出后记一笔卖出并清零(需登录)
+  // 所有已启用券商的同步状态(手机端状态行用)
+  if (urlObj.pathname === "/api/broker-sync" && req.method === "GET") {
+    const detailed = checkAuth(req);
+    res.writeHead(200, noStoreJsonHeaders);
+    res.end(JSON.stringify(brokerSyncs.map((s) => s.status({ detailed }))));
+    return;
+  }
+
   if (urlObj.pathname === "/api/ib-sync/extra" && req.method === "POST") {
     if (!checkAuth(req)) { res.writeHead(401); res.end("Unauthorized"); return; }
     const retryAfter = takeRateLimit(req, "ib-extra", 5, 60 * 1000);
@@ -1595,6 +1612,42 @@ const server = http.createServer((req, res) => {
   }
 
   // API: add holding (auth required)
+  // CSV 导入持仓: 浏览器解析文件、选好列后把行发过来; apply=false 只返回预览, apply=true 写入
+  // 只对有变化的持仓追加一条 sync(备注 CSV 导入), 新代码新建持仓; 文件里没有的持仓不删, 只在预览里列出
+  if (urlObj.pathname === "/api/import/positions" && req.method === "POST") {
+    if (!checkAuth(req)) { res.writeHead(401); res.end("Unauthorized"); return; }
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { accountIndex, rows, apply } = JSON.parse(body || "{}");
+        const p = loadPortfolio();
+        const acc = p.accounts && p.accounts[accountIndex];
+        if (!acc) { res.writeHead(400); res.end("账户不存在"); return; }
+        if (!Array.isArray(rows) || !rows.length || rows.length > 500) { res.writeHead(400); res.end("没有可导入的行(或超过 500 行)"); return; }
+        const clean = rows.map((r) => ({ symbol: String(r.symbol || "").trim().toUpperCase(), name: String(r.name || "").slice(0, 60), qty: Number(r.qty), cost: Number(r.cost) }))
+          .filter((r) => /^[A-Z0-9.\-]{1,15}$/.test(r.symbol) && r.qty > 0 && r.cost >= 0);
+        const plan = planImport(acc, clean);
+        if (apply) {
+          const now = new Date().toISOString();
+          acc.holdings = acc.holdings || [];
+          plan.forEach((x) => {
+            if (x.status === "new") {
+              acc.holdings.push(appendTradeToHolding({ symbol: x.symbol, market: x.market, name: x.name, transactions: [] }, { type: "sync", shares: x.qty, price: x.cost, date: now, note: "CSV 导入" }));
+            } else if (x.status === "update") {
+              const hi = acc.holdings.findIndex((h) => String(h.symbol).toUpperCase() === x.symbol);
+              acc.holdings[hi] = appendTradeToHolding(acc.holdings[hi], { type: "sync", shares: x.qty, price: x.cost, date: now, note: "CSV 导入" });
+            }
+          });
+          if (!persistPortfolio(p)) return;
+        }
+        res.writeHead(200, noStoreJsonHeaders);
+        res.end(JSON.stringify({ ok: true, applied: !!apply, plan }));
+      } catch (e) { res.writeHead(400); res.end(e.message); }
+    });
+    return;
+  }
+
   if (urlObj.pathname === "/api/holding" && req.method === "POST") {
     if (!checkAuth(req)) { res.writeHead(401); res.end("Unauthorized"); return; }
     let body = "";
@@ -2697,26 +2750,36 @@ function withHardTimeout(promise, ms) {
   }
   if (!TEST_MODE || process.env.STOCK_TEST_KLINES === "1") setTimeout(refreshKlinesLoop, 15 * 1000);
 
-  // IB 自动同步定时: 美股时段(含盘前盘后)每 10 分钟拉交易确认; 北京时间周二~周六 9 点后拉一次活动查询对账, 失败 10 分钟(硬错误 1 小时)重试
-  if (ibSync.configured && !TEST_MODE) {
-    let lastConfirmAt = 0, lastPosAttemptAt = 0;
-    const ibTick = () => {
+  // 券商自动同步定时(IB / 长桥 / 自定义):
+  //   成交: 该券商任一市场交易时段内每 10 分钟拉一次;
+  //   持仓: 日结报表型(IB)北京时间周二~周六 9 点后拉一次, 没出就 4 小时后再查; 实时型(长桥等)随成交一起拉;
+  //   失败重试: 令牌/IP 等硬错误 1 小时, 临时失败(限流/网络) 10 分钟
+  if (brokerSyncs.length && !TEST_MODE) {
+    const timers = new Map(brokerSyncs.map((s) => [s.id, { confirmAt: 0, posAt: 0 }]));
+    const brokerTick = () => {
       const now = Date.now(), d = new Date(now);
-      const kinds = [];
-      if (marketSession("us", d).active && now - lastConfirmAt >= 10 * 60 * 1000) { kinds.push("confirms"); lastConfirmAt = now; }
       const bj = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", weekday: "short", hour: "2-digit", hourCycle: "h23" }).formatToParts(d)
         .reduce((o, x) => (o[x.type] = x.value, o), {});
-      const st = ibSync.status({ detailed: true });
-      const p = st.positions;
-      const doneToday = p && p.ok && !p.stale && shanghaiDay(new Date(p.at)) === shanghaiDay(d);
-      // 重试间隔: IB 报表还没出(stale) 4 小时; 令牌/IP 等硬错误 1 小时; 临时失败(限流/网络) 10 分钟
-      const retryMin = p && p.stale ? 240 : p && p.hard ? 60 : 10;
-      if (!["Sun", "Mon"].includes(bj.weekday) && +bj.hour >= 9 && !doneToday && now - lastPosAttemptAt >= retryMin * 60 * 1000) { kinds.push("positions"); lastPosAttemptAt = now; }
-      if (kinds.length) ibSync.run(kinds).catch(() => {});
+      brokerSyncs.forEach((s) => {
+        const t = timers.get(s.id), kinds = [];
+        const active = s.markets.some((m) => marketSession(m, d).active);
+        const st = s.status({ detailed: true });
+        if (active && now - t.confirmAt >= 10 * 60 * 1000) { kinds.push("confirms"); t.confirmAt = now; }
+        const p = st.positions;
+        if (s.positionsDaily) {
+          const doneToday = p && p.ok && !p.stale && shanghaiDay(new Date(p.at)) === shanghaiDay(d);
+          const retryMin = p && p.stale ? 240 : p && p.hard ? 60 : 10;
+          if (!["Sun", "Mon"].includes(bj.weekday) && +bj.hour >= 9 && !doneToday && now - t.posAt >= retryMin * 60 * 1000) { kinds.push("positions"); t.posAt = now; }
+        } else {
+          const retryMin = p && !p.ok ? (p.hard ? 60 : 10) : (active ? 10 : 6 * 60);   // 休市时 6 小时对一次账
+          if (now - t.posAt >= retryMin * 60 * 1000) { kinds.push("positions"); t.posAt = now; }
+        }
+        if (kinds.length) s.run(kinds).catch(() => {});
+      });
     };
-    const t = setInterval(ibTick, 60 * 1000); if (t.unref) t.unref();
-    setTimeout(ibTick, 20 * 1000);
-    console.log(`IB 自动同步已启用${process.env.IB_SYNC_DRYRUN === "1" ? "(试运行)" : ""}`);
+    const tm = setInterval(brokerTick, 60 * 1000); if (tm.unref) tm.unref();
+    setTimeout(brokerTick, 20 * 1000);
+    console.log(`券商自动同步已启用: ${brokerSyncs.map((s) => s.label + (s.status().dryRun ? "(试运行)" : "")).join("、")}`);
   }
   server.listen(PORT, () => {
     console.log(`Calm Portfolio running at http://localhost:${PORT}`);

@@ -1,6 +1,10 @@
 services:
   calm-portfolio:
-    build: .
+    build:
+      context: .
+      args:
+        # 要用长桥自动同步时改成 longport, 然后 docker compose build
+        EXTRA_PACKAGES: ""
     container_name: calm-portfolio
     restart: unless-stopped
     ports:

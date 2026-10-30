@@ -10,7 +10,7 @@ test("默认读取也要登录: 未登录读持仓/规则返回 401, WebSocket �
   const server = await startServer({ extraEnv: { PUBLIC_READ: "0" } });
   t.after(() => server.stop());
 
-  for (const p of ["/api/data", "/api/portfolio", "/api/history", "/plan.json", "/api/journal", "/api/ib-sync"]) {
+  for (const p of ["/api/data", "/api/portfolio", "/api/history", "/plan.json", "/api/journal", "/api/ib-sync", "/api/broker-sync"]) {
     const r = await request(server.baseUrl, p);
     assert.equal(r.status, 401, `${p} 未登录应返回 401`);
   }

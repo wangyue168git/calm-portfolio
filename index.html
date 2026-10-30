@@ -12,9 +12,10 @@
     <script>/* 防主题闪烁: CSS加载前先定class */(function(){var m=localStorage.getItem('themeMode')||'auto';if(m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark');})();</script>
     <!-- 本地化静态资源(原 cdn.tailwindcss.com 运行时 + jsdelivr chart.js): 摆脱 CDN 抖动,与 m.html 共用同一份 -->
     <!-- tailwind.css 重建: npx tailwindcss@3 -c tailwind.config.js -i tailwind.input.css -o tailwind.css --minify -->
-    <link rel="stylesheet" href="/tailwind.css?v=8"><!-- 改 tailwind.css 时三处版本号同步: index.html / m.html / sw.js -->
+    <link rel="stylesheet" href="/tailwind.css?v=9"><!-- 改 tailwind.css 时三处版本号同步: index.html / m.html / sw.js -->
     <script src="/chart.umd.min.js"></script>
-    <script src="/classify.js?v=17"></script><!-- 改 classify.js 时三处版本号同步: index.html / m.html / sw.js -->
+    <script src="/classify.js?v=17"></script>
+    <script src="/csv-import.js?v=1"></script><!-- 改 classify.js 时三处版本号同步: index.html / m.html / sw.js -->
     <style>
         .glass-card {
             background: rgba(255, 255, 255, 0.95);
@@ -397,6 +398,7 @@
                 <div class="flex gap-2">
                     <button onclick="showAddHolding()" class="px-4 py-2 rounded-2xl text-xs font-bold bg-white/60 backdrop-blur-md border border-white/80 text-slate-500 hover:text-slate-900 hover:shadow-md transition">+ 持仓</button>
                     <button onclick="showAddAccount()" class="px-4 py-2 rounded-2xl text-xs font-bold bg-white/60 backdrop-blur-md border border-white/80 text-slate-500 hover:text-slate-900 hover:shadow-md transition">+ 账户</button>
+                    <button onclick="showImportCsv()" class="px-4 py-2 rounded-2xl text-xs font-bold bg-white/60 backdrop-blur-md border border-white/80 text-slate-500 hover:text-slate-900 hover:shadow-md transition">导入 CSV</button>
                 </div>
             </div>
             <div class="bg-white/70 backdrop-blur-2xl border border-white/60 p-7 rounded-3xl hover:shadow-xl transition-all duration-500">
@@ -633,6 +635,38 @@
             <div class="flex gap-3 mt-6">
                 <button onclick="closeModals()" class="flex-1 border border-slate-200 text-slate-600 py-2.5 rounded-lg text-sm hover:bg-slate-50 transition">取消</button>
                 <button onclick="submitAccount()" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg text-sm hover:bg-indigo-700 transition font-medium">确认添加</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导入 CSV 弹窗: 任何券商导出的持仓表都能用 -->
+    <div id="importCsvModal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center">
+        <div class="bg-white rounded-2xl shadow-xl p-8 w-[760px] max-w-[94vw] max-h-[92vh] overflow-y-auto">
+            <h3 class="text-xl font-bold text-slate-800 mb-1">导入持仓（CSV）</h3>
+            <p class="text-sm text-slate-400 mb-5">从券商 App / 网页导出持仓表，另存为 CSV 后选择文件。只更新有变化的持仓，不会删除任何持仓。</p>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1 uppercase tracking-wide">导入到账户</label>
+                    <select id="impAccount" onchange="impPreview()" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"></select>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1 uppercase tracking-wide">CSV 文件</label>
+                    <input id="impFile" type="file" accept=".csv,.txt,text/csv" onchange="impLoadFile()" class="w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-100 file:text-slate-600">
+                </div>
+            </div>
+            <div id="impMapBox" class="hidden mt-5">
+                <div class="text-xs text-slate-500 mb-2">对应的列（已自动识别，不对可以改）</div>
+                <div class="grid grid-cols-4 gap-3">
+                    <div><label class="block text-xs text-slate-400 mb-1">代码 *</label><select id="impColSymbol" onchange="impPreview()" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"></select></div>
+                    <div><label class="block text-xs text-slate-400 mb-1">名称</label><select id="impColName" onchange="impPreview()" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"></select></div>
+                    <div><label class="block text-xs text-slate-400 mb-1">数量 *</label><select id="impColQty" onchange="impPreview()" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"></select></div>
+                    <div><label class="block text-xs text-slate-400 mb-1">成本价 *</label><select id="impColCost" onchange="impPreview()" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"></select></div>
+                </div>
+            </div>
+            <div id="impPreviewBox" class="mt-5 text-sm"></div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="closeModals()" class="flex-1 border border-slate-200 text-slate-600 py-2.5 rounded-lg text-sm hover:bg-slate-50 transition">取消</button>
+                <button id="impApplyBtn" onclick="impApply()" disabled class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg text-sm hover:bg-indigo-700 transition font-medium disabled:opacity-40">确认导入</button>
             </div>
         </div>
     </div>
@@ -2137,6 +2171,76 @@ function showAddHolding() {
     });
 }
 
+// ===== 导入 CSV(任何券商的持仓导出表) =====
+let _impRows = null, _impPlan = null, _impSeq = 0;
+function showImportCsv() {
+    requireAuth(() => {
+        const sel = document.getElementById('impAccount');
+        sel.innerHTML = (portfolioData && portfolioData.accounts || []).map((a, i) => `<option value="${i}">${esc(a.name)}（${esc(a.currency || 'CNY')}）</option>`).join('');
+        document.getElementById('impFile').value = '';
+        document.getElementById('impMapBox').classList.add('hidden');
+        document.getElementById('impPreviewBox').innerHTML = (portfolioData && portfolioData.accounts && portfolioData.accounts.length) ? '' : '<span class="text-amber-600">请先添加一个账户。</span>';
+        document.getElementById('impApplyBtn').disabled = true;
+        _impRows = null; _impPlan = null;
+        const modal = document.getElementById('importCsvModal');
+        modal.style.display = ''; modal.classList.remove('hidden'); modal.classList.add('flex');
+    });
+}
+// 先按 UTF-8 读; 出现乱码(很多国内券商导出 GBK)就改用 GBK 再读一次
+async function impLoadFile() {
+    const f = document.getElementById('impFile').files[0];
+    if (!f) return;
+    const buf = await f.arrayBuffer();
+    let text = new TextDecoder('utf-8').decode(buf);
+    if (text.includes('�')) { try { text = new TextDecoder('gbk').decode(buf); } catch (e) {} }
+    _impRows = CsvImport.parseCsv(text);
+    if (!_impRows.length) { document.getElementById('impPreviewBox').innerHTML = '<span class="text-amber-600">文件是空的。</span>'; return; }
+    const { headerRow, columns } = CsvImport.detectColumns(_impRows);
+    _impRows._header = headerRow;
+    const opts = '<option value="-1">（无）</option>' + _impRows[headerRow].map((h, i) => `<option value="${i}">${esc(h || ('第 ' + (i + 1) + ' 列'))}</option>`).join('');
+    [['impColSymbol', 'symbol'], ['impColName', 'name'], ['impColQty', 'qty'], ['impColCost', 'cost']].forEach(([id, k]) => {
+        const el = document.getElementById(id); el.innerHTML = opts; el.value = String(columns[k]);
+    });
+    document.getElementById('impMapBox').classList.remove('hidden');
+    impPreview();
+}
+async function impPreview() {
+    if (!_impRows) return;
+    const col = id => parseInt(document.getElementById(id).value);
+    const columns = { symbol: col('impColSymbol'), name: col('impColName'), qty: col('impColQty'), cost: col('impColCost') };
+    const box = document.getElementById('impPreviewBox'), btn = document.getElementById('impApplyBtn');
+    btn.disabled = true; _impPlan = null;
+    if (columns.symbol < 0 || columns.qty < 0 || columns.cost < 0) { box.innerHTML = '<span class="text-amber-600">请选好代码、数量、成本价三列。</span>'; return; }
+    const rows = CsvImport.extractRows(_impRows, _impRows._header, columns);
+    if (!rows.length) { box.innerHTML = '<span class="text-amber-600">没有读到有效的持仓行，检查一下选的列。</span>'; return; }
+    const seq = ++_impSeq;
+    const res = await fetch('/api/import/positions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify({ accountIndex: parseInt(document.getElementById('impAccount').value), rows }) });
+    if (seq !== _impSeq) return;
+    if (!res.ok) { box.innerHTML = `<span class="text-red-500">${esc(await res.text())}</span>`; return; }
+    _impPlan = (await res.json()).plan;
+    const TAG = { new: ['新增', 'bg-teal-50 text-teal-600'], update: ['更新', 'bg-indigo-50 text-indigo-600'], same: ['不变', 'bg-slate-100 text-slate-400'], missing: ['文件里没有（不删）', 'bg-amber-50 text-amber-600'] };
+    const f = v => v === undefined || v === null ? '—' : (+v).toLocaleString('zh-CN', { maximumFractionDigits: 4 });
+    const n = k => _impPlan.filter(x => x.status === k).length;
+    box.innerHTML = `<div class="text-slate-500 mb-2">新增 ${n('new')} · 更新 ${n('update')} · 不变 ${n('same')}${n('missing') ? ` · 文件里没有 ${n('missing')}` : ''}</div>
+        <div class="border border-slate-100 rounded-xl overflow-hidden"><table class="w-full text-xs">
+        <thead class="bg-slate-50 text-slate-400"><tr><th class="text-left px-3 py-2">代码</th><th class="text-left px-3 py-2">名称</th><th class="text-right px-3 py-2">数量</th><th class="text-right px-3 py-2">成本价</th><th class="text-right px-3 py-2"></th></tr></thead><tbody>
+        ${_impPlan.map(x => `<tr class="border-t border-slate-100"><td class="px-3 py-2 font-semibold text-slate-700">${esc(x.symbol)}</td><td class="px-3 py-2 text-slate-500">${esc(x.name || '')}</td>
+            <td class="px-3 py-2 text-right tabular-nums">${x.status === 'update' && x.oldQty !== x.qty ? `<span class="text-slate-300">${f(x.oldQty)} → </span>` : ''}${f(x.status === 'missing' ? x.oldQty : x.qty)}</td>
+            <td class="px-3 py-2 text-right tabular-nums">${x.status === 'update' && x.oldCost !== x.cost ? `<span class="text-slate-300">${f(x.oldCost)} → </span>` : ''}${f(x.status === 'missing' ? x.oldCost : x.cost)}</td>
+            <td class="px-3 py-2 text-right"><span class="px-1.5 py-0.5 rounded ${TAG[x.status][1]}">${TAG[x.status][0]}</span></td></tr>`).join('')}
+        </tbody></table></div>`;
+    btn.disabled = !(n('new') + n('update'));
+}
+async function impApply() {
+    if (!_impPlan || !_impRows) return;
+    const rows = _impPlan.filter(x => x.status === 'new' || x.status === 'update' || x.status === 'same').map(x => ({ symbol: x.symbol, name: x.name, qty: x.qty, cost: x.cost }));
+    const res = await fetch('/api/import/positions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify({ accountIndex: parseInt(document.getElementById('impAccount').value), rows, apply: true }) });
+    if (res.status === 401) { authToken = ''; localStorage.removeItem('authToken'); alert('认证已过期，请重新操作'); closeModals(); return; }
+    if (!res.ok) { alert('导入失败：' + await res.text()); return; }
+    closeModals();
+    await refreshPortfolioData();
+}
+
 function showAddAccount() {
     requireAuth(() => {
         const modal = document.getElementById('addAccountModal');
@@ -2230,7 +2334,7 @@ function renderBucketModal() {
 }
 
 function closeModals() {
-    document.querySelectorAll('#addHoldingModal,#addAccountModal,#editHoldingModal,#editCashModal,#addJournalModal,#bucketModal').forEach(m => {
+    document.querySelectorAll('#addHoldingModal,#addAccountModal,#editHoldingModal,#editCashModal,#addJournalModal,#bucketModal,#importCsvModal').forEach(m => {
         m.style.display = '';
         m.classList.add('hidden');
         m.classList.remove('flex');

@@ -9,7 +9,7 @@
 - **纪律页**：本月定投完成了没有、指数和个股的比例、个股买够了没有，一页看完。
 - **防焦虑设计**：首页默认不显示盈亏，轻点才展开、几秒后自动收起；颜色只用在需要注意的地方。
 - **电脑版分析**：组合透视、收益归因、持仓日记、资产曲线。
-- **可选：Interactive Brokers 自动同步**：用 IB 的只读 Flex 令牌，成交和持仓自动写进看板。
+- **券商自动同步（可选）**：内置 Interactive Brokers、长桥；其他券商可以导入 CSV，或自己写一个小适配器接进来。
 - **数据都在你自己手里**：一个 Node.js 进程 + 几个 JSON 文件，没有数据库，没有第三方账号。
 
 > 下面截图里都是虚构的演示数据。手机访问自动进入手机版，电脑访问进入电脑版；也可以直接打开 `/m.html` 或 `/index.html`。
@@ -149,20 +149,19 @@ cp plan.example.json data/plan.json
 
 改完保存即可生效，不用重启。
 
-## Interactive Brokers 自动同步（可选）
+## 券商同步（可选）
 
-1. IB 后台 →「报表」→「Flex 查询」，新建两个查询：
-   - 活动查询，包含 **Open Positions**（持仓）；
-   - 交易确认查询，包含 **Trade Confirmations**（成交）。
-2. 在「Flex Web Service」里生成令牌，建议设置 IP 白名单为你的服务器 IP。
-3. 把令牌和两个查询编号填进 `.env`，重启。
+都是**只读**的：只查询持仓和成交，不会下单。规则都一样：第一次运行只记基线；之后只有券商那边有变化才写入看板；你手动改过的数不会被改回去。
 
-同步规则：
-- 美股交易时段每 10 分钟拉一次新成交，追加成买入 / 卖出记录；
-- 每天早上按 IB 持仓对账一次，只有 IB 那边有变化时才更新看板，不会覆盖你的手动修改；
-- 第一次运行只记录基线，不改任何数据；
-- 令牌只读，程序不会、也不能下单；
-- 如果某只股票除了 IB 还在别处持有一部分，可以用 `IB_SYNC_EXTRA` 告诉对账程序（见 `.env.example`）。
+| 方式 | 适用 | 配置说明 |
+|---|---|---|
+| Interactive Brokers | IB 用户，用官方 Flex 只读令牌 | [docs/brokers/ib.md](docs/brokers/ib.md) |
+| 长桥 Longbridge | 长桥用户，用官方 OpenAPI | [docs/brokers/longbridge.md](docs/brokers/longbridge.md) |
+| 导入 CSV | **任何券商**：导出持仓表，在电脑版导入 | [docs/brokers/csv.md](docs/brokers/csv.md) |
+| 富途 / moomoo | 暂无内置，可导入 CSV 或自己接 OpenD | [docs/brokers/futu.md](docs/brokers/futu.md) |
+| 自己写适配器 | 其他有接口的券商、或自己定时生成的文件 | [docs/brokers/custom.md](docs/brokers/custom.md) |
+
+多个券商可以同时启用，手机端首页底部会各显示一行同步状态；令牌快到期时会提醒。
 
 ## 安全
 
