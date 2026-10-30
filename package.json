@@ -1,0 +1,14 @@
+{
+  "name": "calm-portfolio",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='*.js' --test-coverage-exclude='test/**'"
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
+  },
+  "description": "自托管的冷静持仓看板：多账户汇总、按自己的规则提示可加/封仓、防焦虑设计",
+  "license": "MIT"
+}

@@ -1,0 +1,18 @@
+{
+  "_note": "演示用的虚构持仓。以 DEMO=1 首次启动时会复制到数据目录; 正式使用请在页面里自己添加账户和持仓。",
+  "exchangeRate": { "USD_CNY": 7.1 },
+  "accounts": [
+    {
+      "name": "IB", "currency": "USD", "cash": 300, "holdings": [
+        { "symbol": "VOO", "name": "标普500 VOO", "market": "nyse", "shares": 12, "costPrice": 480, "transactions": [{ "type": "sync", "shares": 12, "price": 480, "date": "2025-01-02T00:00:00.000Z" }] },
+        { "symbol": "QQQM", "name": "纳指100 QQQM", "market": "nasdaq", "shares": 20, "costPrice": 190, "transactions": [{ "type": "sync", "shares": 20, "price": 190, "date": "2025-01-02T00:00:00.000Z" }] },
+        { "symbol": "AAPL", "name": "苹果", "market": "nasdaq", "shares": 15, "costPrice": 210, "transactions": [{ "type": "sync", "shares": 15, "price": 210, "date": "2025-01-02T00:00:00.000Z" }] }
+      ]
+    },
+    {
+      "name": "A股账户", "currency": "CNY", "cash": 2000, "holdings": [
+        { "symbol": "513650", "name": "标普500ETF", "market": "sh", "shares": 10000, "costPrice": 1.75, "transactions": [{ "type": "sync", "shares": 10000, "price": 1.75, "date": "2025-01-02T00:00:00.000Z" }] }
+      ]
+    }
+  ]
+}

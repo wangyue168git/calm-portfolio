@@ -1,0 +1,11 @@
+services:
+  calm-portfolio:
+    build: .
+    container_name: calm-portfolio
+    restart: unless-stopped
+    ports:
+      - "3457:3457"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
