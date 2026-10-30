@@ -11,6 +11,11 @@ const { canCommitGeneration, evaluateQuoteHealth, quoteKey, serializeFreshness }
 const { createIbSync, shanghaiDay, parseExtras: parseIbExtras } = require("./ib-sync");
 const { buildBrokerSyncs } = require("./brokers");
 const { planImport } = require("./csv-import");
+const { applySymbolRule, applyAllocation } = require("./plan-edit");
+const { aiConfigFromEnv, streamChat } = require("./ai/providers");
+const { buildAiContext } = require("./ai/context");
+const { buildSystem, extractProposals, validateProposals, CHECKUP_PROMPT } = require("./ai/prompts");
+const { createPendingStore } = require("./ai/pending");
 
 // 给所有 outbound https/http.get 加 timeout → destroy 兜底。
 // 原因: Node 的 timeout 选项只发 'timeout' 事件、不会自动断请求；
@@ -431,6 +436,14 @@ const PLAN_FILE = path.join(DATA_DIR, "plan.json");
 const PLAN_EXAMPLE_FILE = path.join(__dirname, "plan.example.json");
 const READ_APIS = new Set(["/plan.json", "/api/portfolio", "/api/history", "/api/data", "/api/journal", "/api/ib-sync", "/api/broker-sync"]);
 let _planCache = { mtime: -1, file: "", doc: {} };
+function savePlan(plan) {
+  try {
+    const tmp = PLAN_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(plan, null, 1) + "\n");
+    fs.renameSync(tmp, PLAN_FILE);
+    return true;
+  } catch (e) { console.error("plan.json 写入失败:", e.message); return false; }
+}
 function loadPlan() {
   const file = fs.existsSync(PLAN_FILE) ? PLAN_FILE : PLAN_EXAMPLE_FILE;
   try {
@@ -636,6 +649,26 @@ const otherBrokerSyncs = buildBrokerSyncs({
   deps: { loadPortfolio, savePortfolio, appendTrade: (h, t) => appendTradeToHolding(h, t) },
 });
 const brokerSyncs = [ibSync, ...otherBrokerSyncs].filter((s) => s.configured);
+
+// ---- AI 顾问(可选): 不配置 AI_PROVIDER 就没有入口, 行为与之前完全一致 ----
+const AI = aiConfigFromEnv(process.env);
+const AI_COOLDOWN_HOURS = Math.max(0, Math.min(24 * 30, Number(process.env.AI_COOLDOWN_HOURS) || 0));
+const AI_ANONYMIZE_DEFAULT = process.env.AI_SEND_AMOUNTS !== "1";   // 默认只发比例
+const aiPending = createPendingStore(path.join(DATA_DIR, "ai-pending.json"));
+// 把确认过的建议写进 plan.json(每条一条 changelog, 标记来源 AI)
+function applyAiProposals(proposals, reason) {
+  const plan = JSON.parse(JSON.stringify(loadPlan() || {}));
+  const results = [];
+  validateProposals(proposals, plan).forEach((p) => {
+    const why = reason ? `${reason}（AI 建议：${p.why || "无"}）` : `AI 建议：${p.why || "无"}`;
+    const r = p.kind === "symbol"
+      ? applySymbolRule(plan, p.symbol, p.rule, { reason: why, source: "ai" })
+      : applyAllocation(plan, p.change, { reason: why, source: "ai" });
+    results.push({ summary: p.summary, ok: !r.error, error: r.error });
+  });
+  if (results.some((r) => r.ok) && !savePlan(plan)) throw new Error("规则保存失败");
+  return results;
+}
 
 // ---- History tracking ----
 // In-memory history with file persistence as backup
@@ -1239,6 +1272,7 @@ const PUBLIC_STATIC_FILES = {
   "/chart.umd.min.js": ["chart.umd.min.js", "application/javascript; charset=utf-8"],
   "/classify.js": ["classify.js", "application/javascript; charset=utf-8"],
   "/csv-import.js": ["csv-import.js", "application/javascript; charset=utf-8"],
+  "/ai-panel.js": ["ai-panel.js", "application/javascript; charset=utf-8"],
   "/sw.js": ["sw.js", "application/javascript; charset=utf-8"],
   "/manifest.json": ["manifest.json", "application/manifest+json; charset=utf-8"],
   "/favicon.ico": ["favicon.ico", "image/x-icon"],
@@ -1423,6 +1457,82 @@ const server = http.createServer((req, res) => {
 
   // API: 设置/删除单只标的的买入规则(写 DATA_DIR/plan.json; 首次写入时以示例规则为底)
   // body: { symbol, rule }  rule=null 删除; rule={ type: open|seal|band, openBelowPct, sealAtPct, targetShares?, why? }
+  // ===== AI 顾问 =====
+  if (urlObj.pathname.startsWith("/api/ai/")) {
+    if (!checkAuth(req)) { res.writeHead(401); res.end("Unauthorized"); return; }
+    const sendJson = (code, obj) => { res.writeHead(code, noStoreJsonHeaders); res.end(JSON.stringify(obj)); };
+    const readBody = (cb) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => { let args; try { args = JSON.parse(body || "{}"); } catch { sendJson(400, { ok: false, error: "请求格式错误" }); return; } cb(args); });
+    };
+    const currentData = () => latestData || loadPortfolio();
+
+    if (urlObj.pathname === "/api/ai/config" && req.method === "GET") {
+      sendJson(200, { enabled: AI.enabled, provider: AI.enabled ? AI.provider : null, model: AI.enabled ? AI.model : null, anonymizeDefault: AI_ANONYMIZE_DEFAULT, cooldownHours: AI_COOLDOWN_HOURS, checkupPrompt: CHECKUP_PROMPT });
+      return;
+    }
+    if (!AI.enabled) { sendJson(404, { ok: false, error: "未配置 AI(见 .env 的 AI_PROVIDER)" }); return; }
+
+    // 预览: 这次会发给 AI 的数据
+    if (urlObj.pathname === "/api/ai/context" && req.method === "POST") {
+      readBody((args) => sendJson(200, { ok: true, text: buildAiContext(currentData(), loadPlan(), { anonymize: args.anonymize !== false }).text }));
+      return;
+    }
+
+    // 对话(流式): 页面把对话历史发来, 服务端加上系统提示和当前数据
+    if (urlObj.pathname === "/api/ai/chat" && req.method === "POST") {
+      const retryAfter = takeRateLimit(req, "ai", 30, 60 * 60 * 1000);
+      if (retryAfter) { rejectRateLimited(res, retryAfter); return; }
+      readBody(async (args) => {
+        const msgs = (Array.isArray(args.messages) ? args.messages : [])
+          .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+          .slice(-20).map((m) => ({ role: m.role, content: m.content.slice(0, 8000) }));
+        while (msgs.length && msgs[0].role !== "user") msgs.shift();
+        if (!msgs.length || msgs[msgs.length - 1].role !== "user") { sendJson(400, { ok: false, error: "最后一条应该是你的问题" }); return; }
+        const plan = loadPlan();
+        const system = buildSystem(buildAiContext(currentData(), plan, { anonymize: args.anonymize !== false }).text);
+        res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no", Connection: "keep-alive" });
+        const send = (event, data) => { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+        const ac = new AbortController();
+        res.on("close", () => ac.abort());
+        let full = "";
+        try {
+          const r = await streamChat(AI, { system, messages: msgs, signal: ac.signal, onText: (t) => { full += t; send("delta", { t }); } });
+          send("done", { proposals: extractProposals(full, plan), stopReason: r && r.stopReason });
+        } catch (e) {
+          if (!ac.signal.aborted) send("error", { msg: String((e && e.message) || e).slice(0, 300) });
+        }
+        res.end();
+      });
+      return;
+    }
+
+    // 应用确认过的建议; 设了冷静期就先存为待生效
+    if (urlObj.pathname === "/api/ai/apply" && req.method === "POST") {
+      readBody((args) => {
+        const proposals = validateProposals(Array.isArray(args.proposals) ? args.proposals : [], loadPlan());
+        if (!proposals.length) { sendJson(400, { ok: false, error: "没有可应用的建议(可能已经和现在一样了)" }); return; }
+        const reason = String(args.reason || "").trim().slice(0, 200);
+        if (AI_COOLDOWN_HOURS > 0) {
+          const item = aiPending.add({ proposals, reason, hours: AI_COOLDOWN_HOURS });
+          sendJson(200, { ok: true, pending: true, dueAt: item.dueAt, results: proposals.map((p) => ({ summary: p.summary, ok: true })) });
+          return;
+        }
+        try { sendJson(200, { ok: true, pending: false, results: applyAiProposals(proposals, reason) }); }
+        catch (e) { sendJson(500, { ok: false, error: e.message }); }
+      });
+      return;
+    }
+    if (urlObj.pathname === "/api/ai/pending" && req.method === "GET") { sendJson(200, { ok: true, items: aiPending.list() }); return; }
+    if (urlObj.pathname === "/api/ai/pending" && req.method === "DELETE") {
+      sendJson(aiPending.cancel(String(urlObj.searchParams.get("id") || "")) ? 200 : 404, { ok: true });
+      return;
+    }
+    sendJson(404, { ok: false, error: "not found" });
+    return;
+  }
+
   if (urlObj.pathname === "/api/plan/symbol" && req.method === "PUT") {
     if (!checkAuth(req)) { res.writeHead(401); res.end("Unauthorized"); return; }
     let body = "";
@@ -1430,47 +1540,12 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       let args;
       try { args = JSON.parse(body || "{}"); } catch { res.writeHead(400); res.end("请求格式错误"); return; }
-      const sym = String(args.symbol || "").trim().toUpperCase();
-      if (!/^[A-Z0-9.\-]{1,15}$/.test(sym)) { res.writeHead(400); res.end("标的代码不合法"); return; }
-      let rule = null;
-      if (args.rule !== null && args.rule !== undefined) {
-        const r = args.rule, type = String(r.type || "");
-        if (!["open", "seal", "band"].includes(type)) { res.writeHead(400); res.end("规则类型只能是 open / seal / band"); return; }
-        rule = { type };
-        if (type === "band") {
-          const lo = Number(r.openBelowPct), hi = Number(r.sealAtPct);
-          if (!(lo >= 0 && lo <= 100 && hi > 0 && hi <= 100 && lo <= hi)) { res.writeHead(400); res.end("占比需在 0–100 之间, 且「可加」不高于「封仓」"); return; }
-          rule.openBelowPct = lo; rule.sealAtPct = hi;
-          if (r.targetShares !== undefined && r.targetShares !== null && r.targetShares !== "") {
-            const t = Number(r.targetShares);
-            if (!(t > 0)) { res.writeHead(400); res.end("目标股数需大于 0"); return; }
-            rule.targetShares = t;
-          }
-        }
-        if (r.why) rule.why = String(r.why).slice(0, 200);
-      }
-      const reason = String(args.reason || "").trim().slice(0, 200);
       const plan = JSON.parse(JSON.stringify(loadPlan() || {}));
-      plan.channels = plan.channels || {};
-      plan.channels.symbols = plan.channels.symbols || {};
-      const prev = plan.channels.symbols[sym] || null;
-      if (rule) plan.channels.symbols[sym] = rule; else delete plan.channels.symbols[sym];
-      // 规则有变化就自动记一条 changelog(日期 + 改前改后 + 理由), 方便日后回看为什么改
-      const describe = (x) => !x ? "未设（按默认）" : x.type === "open" ? "一直可加" : x.type === "seal" ? "一直封仓"
-        : x.type === "band" ? `${x.openBelowPct}% 以下可加、${x.sealAtPct}% 封仓${x.targetShares ? `、目标 ${x.targetShares} 股` : ""}` : x.type;
-      if (describe(prev) !== describe(rule)) {
-        plan.changelog = Array.isArray(plan.changelog) ? plan.changelog : [];
-        const now = new Date();
-        plan.changelog.push({ version: `页面-${now.toISOString().slice(0, 10)}`, date: now.toISOString(),
-          changes: [`${sym}：${describe(prev)} → ${describe(rule)}`], reason, objections: [] });
-      }
-      try {
-        const tmp = PLAN_FILE + ".tmp";
-        fs.writeFileSync(tmp, JSON.stringify(plan, null, 1) + "\n");
-        fs.renameSync(tmp, PLAN_FILE);
-      } catch (e) { res.writeHead(500, noStoreJsonHeaders); res.end(JSON.stringify({ ok: false, error: "规则保存失败" })); return; }
+      const r = applySymbolRule(plan, args.symbol, args.rule === undefined ? null : args.rule, { reason: args.reason, source: "page" });
+      if (r.error) { res.writeHead(400); res.end(r.error); return; }
+      if (!savePlan(plan)) { res.writeHead(500, noStoreJsonHeaders); res.end(JSON.stringify({ ok: false, error: "规则保存失败" })); return; }
       res.writeHead(200, noStoreJsonHeaders);
-      res.end(JSON.stringify({ ok: true, symbol: sym, rule }));
+      res.end(JSON.stringify({ ok: true, symbol: r.symbol, rule: r.rule }));
     });
     return;
   }
@@ -2749,6 +2824,17 @@ function withHardTimeout(promise, ms) {
     setTimeout(refreshKlinesLoop, 60 * 1000);
   }
   if (!TEST_MODE || process.env.STOCK_TEST_KLINES === "1") setTimeout(refreshKlinesLoop, 15 * 1000);
+
+  // AI 建议冷静期: 每分钟把到期的待生效建议写进 plan.json
+  if (AI.enabled && AI_COOLDOWN_HOURS > 0) {
+    const t = setInterval(() => {
+      aiPending.takeDue().forEach((item) => {
+        try { applyAiProposals(item.proposals, item.reason); console.log(`[ai] 待生效建议已应用(${item.proposals.length} 条)`); }
+        catch (e) { console.error("[ai] 应用待生效建议失败:", e.message); }
+      });
+    }, 60 * 1000);
+    if (t.unref) t.unref();
+  }
 
   // 券商自动同步定时(IB / 长桥 / 自定义):
   //   成交: 该券商任一市场交易时段内每 10 分钟拉一次;

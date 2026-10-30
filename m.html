@@ -14,9 +14,10 @@
 <meta name="apple-mobile-web-app-title" content="冷静持仓">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><!-- iOS26: default 模式下 env(safe-area-inset-top) 恒为0, translucent 才如实上报 -->
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="/tailwind.css?v=9">
+<link rel="stylesheet" href="/tailwind.css?v=10">
 <script src="/chart.umd.min.js"></script>
 <script src="/classify.js?v=17"></script>
+<script src="/ai-panel.js?v=2"></script>
 <style>
     :root {
         color-scheme: light;
@@ -316,6 +317,7 @@
 <section id="pageDiscipline" class="page px-4 pt-3">
     <div class="flex items-center justify-center relative h-10 mb-3">
         <h1 class="text-[17px] font-bold">纪律</h1>
+        <button id="aiBtn" onclick="CalmAI.open()" class="hidden absolute left-0 px-3 py-1 rounded-full text-[12px] font-bold bg-teal-50 text-teal-600">AI 顾问</button>
         <span id="mDcLock" class="absolute right-0 text-[11px] text-gray-400 font-semibold"></span>
     </div>
     <div id="mDcExec"></div>
@@ -2087,7 +2089,23 @@ function renderBrokerSync(list){
     all.forEach(st => el.appendChild(_syncLine(st)));
     el.classList.remove('hidden');
 }
+// AI 顾问: 服务端配置了才显示入口(纪律页左上角); 改了规则后刷新规则和页面
+CalmAI.init({
+    getToken: () => authToken,
+    ensureAuth: (cb) => requireAuth(cb),
+    onPlanChanged: async () => {
+        try { planDoc = await (await authedFetch('/plan.json?t=' + Date.now(), { cache: 'no-store' })).json(); if (typeof configureGroups === 'function') configureGroups(planDoc.groups); } catch (e) {}
+        if (state) { render(); renderDisciplineM(); }
+    },
+});
+let _aiChecked = false;
+function checkAiEntry(){
+    if (_aiChecked || !authToken) return;
+    CalmAI.available().then(ok => { _aiChecked = true; document.getElementById('aiBtn').classList.toggle('hidden', !ok); });
+}
+setInterval(checkAiEntry, 3000);   // 登录后几秒内显示入口; 查到结果后不再请求
 function loadIbSync(){
+    checkAiEntry();
     authedFetch('/api/broker-sync', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(renderBrokerSync).catch(() => {});
 }
 loadIbSync();

@@ -7,6 +7,7 @@
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='*.js' --test-coverage-exclude='test/**'"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "ws": "^8.21.0"
   },
   "description": "自托管的冷静持仓看板：多账户汇总、按自己的规则提示可加/封仓、防焦虑设计",

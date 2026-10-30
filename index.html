@@ -12,10 +12,11 @@
     <script>/* 防主题闪烁: CSS加载前先定class */(function(){var m=localStorage.getItem('themeMode')||'auto';if(m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark');})();</script>
     <!-- 本地化静态资源(原 cdn.tailwindcss.com 运行时 + jsdelivr chart.js): 摆脱 CDN 抖动,与 m.html 共用同一份 -->
     <!-- tailwind.css 重建: npx tailwindcss@3 -c tailwind.config.js -i tailwind.input.css -o tailwind.css --minify -->
-    <link rel="stylesheet" href="/tailwind.css?v=9"><!-- 改 tailwind.css 时三处版本号同步: index.html / m.html / sw.js -->
+    <link rel="stylesheet" href="/tailwind.css?v=10"><!-- 改 tailwind.css 时三处版本号同步: index.html / m.html / sw.js -->
     <script src="/chart.umd.min.js"></script>
-    <script src="/classify.js?v=17"></script>
-    <script src="/csv-import.js?v=1"></script><!-- 改 classify.js 时三处版本号同步: index.html / m.html / sw.js -->
+    <script src="/classify.js?v=17"></script><!-- 改 classify.js 时三处版本号同步: index.html / m.html / sw.js -->
+    <script src="/csv-import.js?v=1"></script>
+    <script src="/ai-panel.js?v=2"></script>
     <style>
         .glass-card {
             background: rgba(255, 255, 255, 0.95);
@@ -339,6 +340,7 @@
                 <h1 class="text-2xl md:text-3xl font-bold text-slate-800">投资组合看板</h1>
             </div>
             <div class="flex flex-wrap items-center gap-2 text-xs text-slate-400 mt-2">
+                <button onclick="CalmAI.open()" id="aiBtn" class="hidden px-3 py-1.5 rounded-lg border border-teal-200 text-teal-600 hover:bg-teal-50 transition text-xs font-medium" title="AI 顾问">AI 顾问</button>
                 <button onclick="enterZen()" id="zenBtn" class="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-500 hover:bg-indigo-50 transition text-xs font-medium" title="冷静模式">&#129496; 冷静</button>
                 <div class="relative inline-block" id="modeMenuWrap">
                     <button onclick="toggleModeMenu(event)" id="modeMenuBtn" class="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition text-xs font-medium" title="遮掩 / 主题">✨ 模式 ▾</button>
@@ -2240,6 +2242,22 @@ async function impApply() {
     closeModals();
     await refreshPortfolioData();
 }
+
+// ===== AI 顾问(服务端配置了才显示入口) =====
+CalmAI.init({
+    getToken: () => authToken,
+    ensureAuth: (cb) => requireAuth(cb),
+    onPlanChanged: async () => {
+        try { planDoc = await (await authedFetch('/plan.json?t=' + Date.now(), { cache: 'no-store' })).json(); if (typeof configureGroups === 'function') configureGroups(planDoc.groups); } catch (e) {}
+        await refreshPortfolioData();
+    },
+});
+let _aiChecked = false;
+function checkAiEntry() {
+    if (_aiChecked || !authToken) return;
+    CalmAI.available().then(ok => { _aiChecked = true; document.getElementById('aiBtn').classList.toggle('hidden', !ok); });
+}
+setInterval(checkAiEntry, 3000); checkAiEntry();
 
 function showAddAccount() {
     requireAuth(() => {
