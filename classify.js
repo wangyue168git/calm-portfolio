@@ -39,12 +39,13 @@ function isWarningHolding(holding) {
 
 // 饼图聚合组: 与持仓列表分组语义对齐。
 // 传入 weightPct(该持仓占总资产%)时: 个股占比 <5% 聚成"观察仓", ≥5% 各自单列; 不传则个股一律单列。
-function classifyPieGroup(holding, weightPct) {
+// rule = plan.json channels.symbols[该代码](可不传)。设了「看占比」规则(band)的个股 = 打算建仓, 不论占比都算个股组; 没规则或一直封仓的才按 <5% 进观察仓。
+function classifyPieGroup(holding, weightPct, rule) {
     if (holding.market === 'crypto') return '加密资产';
     const bucket = classifyAllocationBucket(holding);
     if (bucket) return bucket;                                    // 纳指指数类 / 标普
     if (isWarningHolding(holding) || isOtherHolding(holding)) return '其他';
-    if (weightPct != null && weightPct < 5) return '观察仓';
+    if (weightPct != null && weightPct < 5 && !(rule && rule.type === 'band')) return '观察仓';   // 小仓个股(且没设建仓规则) → 观察仓
     return holding.name || holding.symbol || '未命名';
 }
 

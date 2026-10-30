@@ -14,7 +14,7 @@
     <!-- tailwind.css 重建: npx tailwindcss@3 -c tailwind.config.js -i tailwind.input.css -o tailwind.css --minify -->
     <link rel="stylesheet" href="/tailwind.css?v=8"><!-- 改 tailwind.css 时三处版本号同步: index.html / m.html / sw.js -->
     <script src="/chart.umd.min.js"></script>
-    <script src="/classify.js?v=16"></script><!-- 改 classify.js 时三处版本号同步: index.html / m.html / sw.js -->
+    <script src="/classify.js?v=17"></script><!-- 改 classify.js 时三处版本号同步: index.html / m.html / sw.js -->
     <style>
         .glass-card {
             background: rgba(255, 255, 255, 0.95);
@@ -596,11 +596,11 @@
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs text-slate-500 mb-1 uppercase tracking-wide">持仓数量</label>
-                        <input id="fShares" type="number" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" placeholder="100">
+                        <input id="fShares" oninput="syncRuleTarget()" type="number" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" placeholder="100">
                     </div>
                     <div>
                         <label class="block text-xs text-slate-500 mb-1 uppercase tracking-wide">成本价</label>
-                        <input id="fCost" type="number" step="0.01" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" placeholder="150.00">
+                        <input id="fCost" oninput="updateRuleHint('add')" type="number" step="0.01" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" placeholder="150.00">
                     </div>
                 </div>
             </div>
@@ -1148,7 +1148,8 @@ function buildAllocationGroups(data, rate) {
     });
     const groups = {};
     items.forEach(({ h, valueCNY }) => {
-        const bucket = classifyPieGroup(h, total > 0 ? valueCNY / total * 100 : 0); // 与 m.html 同口径(逻辑在 classify.js)
+        const rule = planDoc && planDoc.channels && planDoc.channels.symbols ? planDoc.channels.symbols[String(h.symbol || '').toUpperCase()] : null;
+        const bucket = classifyPieGroup(h, total > 0 ? valueCNY / total * 100 : 0, rule); // 与 m.html 同口径(逻辑在 classify.js)
         groups[bucket] = (groups[bucket] || 0) + valueCNY;
     });
     // 现金并入饼图, 单独一组
@@ -1315,18 +1316,20 @@ function renderDiscipline(data) {
     let gPct = 0, gTag = null;
     if (gHold && tot > 0) {
         gPct = gVal / tot * 100;
-        // 判断逻辑与手机端共用 classify.js evaluateChannel (迟滞键也一致)
-        const ev = evaluateChannel(ch, gSym, { weightPct: gPct, stockPct: stPct, price: gHold.currentPrice || 0 }, { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } });
+        // 上限优先读这只自己的「看占比」规则, 没有才用 singleCapPct; 带股数, 目标股数买够即封
+        const gRule = (ch.symbols || {})[gSym];
+        const gCap = gRule && gRule.type === 'band' ? (Number(gRule.sealAtPct) || singleCap) : singleCap;
+        const ev = evaluateChannel(ch, gSym, { weightPct: gPct, stockPct: stPct, price: gHold.currentPrice || 0, shares: gHold.shares || 0 }, { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } });
         const st = ev.st;
         gTag = st;
         const lbl = ev.label;
         const tagCls = st === 'open' ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-400';
         gRow = `<div class="flex items-center justify-between text-xs mt-3">
-                <span class="font-bold text-slate-500">${gSym} <span class="text-slate-400 font-semibold tabular-nums">${gPct.toFixed(1)} / ≤${singleCap}</span></span>
+                <span class="font-bold text-slate-500">${gSym} <span class="text-slate-400 font-semibold tabular-nums">${gPct.toFixed(1)} / ≤${gCap}</span></span>
                 <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded ${tagCls}">${lbl}</span>
             </div>
             <div class="relative rounded-full bg-slate-200" style="height:8px;margin-top:6px;margin-right:2px">
-                <div class="absolute inset-y-0 left-0 rounded-full" style="width:${Math.min(100, gPct / singleCap * 100)}%;background:#f59e0b"></div>
+                <div class="absolute inset-y-0 left-0 rounded-full" style="width:${Math.min(100, gPct / gCap * 100)}%;background:#f59e0b"></div>
                 <div class="absolute" style="left:100%;top:-2px;width:2px;height:12px;background:#94a3b8;border-radius:1px;transform:translateX(-2px)"></div>
             </div>`;
     }
@@ -1408,7 +1411,7 @@ function renderDcAnalysis(data, mulOf, ctx) {
     });
     // ② 观察仓合计(占比 <5% 的小仓个股, 与饼图 classifyPieGroup 同口径): 规则里设了 channels.observationCapPct 才显示
     const obsCap = Number(ch && ch.observationCapPct) || 0;
-    const obs = (tot > 0 && obsCap > 0) ? rows.filter(x => classifyPieGroup(x.h, x.mv / tot * 100) === '观察仓') : [];
+    const obs = (tot > 0 && obsCap > 0) ? rows.filter(x => classifyPieGroup(x.h, x.mv / tot * 100, ((ch && ch.symbols) || {})[String(x.h.symbol || '').toUpperCase()]) === '观察仓') : [];
     if (obs.length) {
         const p = obs.reduce((s, r) => s + r.mv, 0) / tot * 100;
         items.push(`<span class="dcs-it"><span class="dcs-k">观察仓合计</span><span class="dcs-v font-mono ${p > obsCap ? 'dcs-amber' : ''}">${p.toFixed(1)}<span class="dcs-lim">/≤${obsCap}</span></span></span>`);
@@ -2001,15 +2004,21 @@ function ruleBoxHtml(p){
         <div id="${p}RuleBand" class="hidden mt-3">
             <div class="flex gap-3">
                 <div class="flex-1"><label class="block text-xs text-slate-500 mb-1">占比低于 % 可加</label><input id="${p}RuleLo" type="number" step="any" class="${RULE_INPUT}" placeholder="8"></div>
-                <div class="flex-1"><label class="block text-xs text-slate-500 mb-1">占比到 % 封仓</label><input id="${p}RuleHi" type="number" step="any" class="${RULE_INPUT}" placeholder="10"></div>
+                <div class="flex-1"><label class="block text-xs text-slate-500 mb-1">占比到 % 封仓</label><input id="${p}RuleHi" oninput="updateRuleHint('${p}')" type="number" step="any" class="${RULE_INPUT}" placeholder="10"></div>
             </div>
             <label class="block text-xs text-slate-500 mt-3 mb-1">目标股数（可选，买够即封仓）</label>
-            <input id="${p}RuleTarget" type="number" step="any" class="${RULE_INPUT}" placeholder="如 20">
+            <input id="${p}RuleTarget" oninput="this.dataset.touched='1'" type="number" step="any" class="${RULE_INPUT}" placeholder="如 20">
+            <p id="${p}RuleHint" class="text-xs text-slate-400 mt-2"></p>
         </div>
+        <div id="${p}RuleWhyBox" class="hidden mt-3"><label class="block text-xs text-slate-400 mb-1">修改理由（可选，会记进规则的修改记录）</label><input id="${p}RuleReason" maxlength="200" class="${RULE_INPUT}" placeholder="为什么这样定？"></div>
         <p id="${p}RuleNote" class="hidden text-xs text-slate-500 mt-2"></p>`;
 }
 function onRuleTypeChange(p){
-    document.getElementById(p + 'RuleBand').classList.toggle('hidden', document.getElementById(p + 'RuleType').value !== 'band');
+    const sel = document.getElementById(p + 'RuleType');
+    document.getElementById(p + 'RuleBand').classList.toggle('hidden', sel.value !== 'band');
+    document.getElementById(p + 'RuleWhyBox').classList.toggle('hidden', sel.disabled || (!sel.value && sel.dataset.had !== '1'));
+    if (p === 'add') syncRuleTarget();
+    updateRuleHint(p);
 }
 function ruleOf(sym){
     const map = (planDoc && planDoc.channels && planDoc.channels.symbols) || {};
@@ -2019,8 +2028,10 @@ function ruleOf(sym){
 function fillRuleForm(p, sym){
     const rule = sym ? ruleOf(sym) : null;
     const sel = document.getElementById(p + 'RuleType'), note = document.getElementById(p + 'RuleNote');
-    ['RuleLo', 'RuleHi', 'RuleTarget'].forEach(k => { document.getElementById(p + k).value = ''; });
+    ['RuleLo', 'RuleHi', 'RuleTarget', 'RuleReason'].forEach(k => { document.getElementById(p + k).value = ''; });
+    document.getElementById(p + 'RuleTarget').dataset.touched = '';
     sel.disabled = false; note.classList.add('hidden');
+    sel.dataset.had = rule ? '1' : '';   // 原来有规则: 改成「不设」(删除)时也显示理由框
     if (rule && !['open', 'seal', 'band'].includes(rule.type)) {
         sel.value = ''; sel.disabled = true;
         note.textContent = `这只标的使用「${rule.type}」规则，请在 plan.json 里修改`; note.classList.remove('hidden');
@@ -2040,18 +2051,19 @@ function readRuleForm(p){
     const sel = document.getElementById(p + 'RuleType');
     if (sel.disabled) return { skip: true };
     const type = sel.value;
-    if (!type) return { rule: null };
-    if (type !== 'band') return { rule: { type, why: type === 'open' ? '一直可加' : '一直封仓' } };
+    const reason = document.getElementById(p + 'RuleReason').value.trim();
+    if (!type) return { rule: null, reason };
+    if (type !== 'band') return { rule: { type, why: type === 'open' ? '一直可加' : '一直封仓' }, reason };
     const lo = parseFloat(document.getElementById(p + 'RuleLo').value), hi = parseFloat(document.getElementById(p + 'RuleHi').value);
     const tg = document.getElementById(p + 'RuleTarget').value.trim();
     if (isNaN(lo) || isNaN(hi) || lo < 0 || hi > 100 || lo > hi) return { error: '占比填写有误：需在 0–100 之间，且「可加」不高于「封仓」' };
     const rule = { type: 'band', openBelowPct: lo, sealAtPct: hi };
     if (tg) { const n = parseFloat(tg); if (!(n > 0)) return { error: '目标股数需大于 0' }; rule.targetShares = n; }
     rule.why = `${lo}% 以下可加，${hi}% 封仓` + (rule.targetShares ? `；目标 ${rule.targetShares} 股` : '');
-    return { rule };
+    return { rule, reason };
 }
-async function saveRule(sym, rule){
-    const res = await fetch('/api/plan/symbol', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify({ symbol: sym, rule }) });
+async function saveRule(sym, rule, reason){
+    const res = await fetch('/api/plan/symbol', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify({ symbol: sym, rule, reason: reason || '' }) });
     if (res.status === 401) { authToken = ''; localStorage.removeItem('authToken'); alert('认证已过期，请重新操作'); return false; }
     if (!res.ok) { alert('规则保存失败：' + await res.text()); return false; }
     try {
@@ -2062,6 +2074,51 @@ async function saveRule(sym, rule){
 }
 document.getElementById('addRuleBox').innerHTML = ruleBoxHtml('add');
 document.getElementById('editRuleBox').innerHTML = ruleBoxHtml('edit');
+
+// ---- 规则表单: 目标股数参考 + 修改理由(2026-10-30) ----
+// 参考股数 = 总资产 × 占比 ÷ 每股人民币价, 只提示不自动填; 添加持仓时目标股数默认跟随本次买入股数(手动改过就不再跟随)
+function updateRuleHint(p){
+    const el = document.getElementById(p + 'RuleHint');
+    if (!el) return;
+    const sel = document.getElementById(p + 'RuleType');
+    if (!sel || sel.value !== 'band') { el.textContent = ''; return; }
+    const { per, total } = ruleHintCtx(p);
+    if (!(per > 0) || !(total > 0)) { el.textContent = p === 'add' ? '填了成本价后显示参考股数' : ''; return; }
+    const n = pct => Math.floor(total * pct / 100 / per);
+    const cap = parseFloat(document.getElementById(p + 'RuleHi').value);
+    const pcts = [5, 10]; if (cap > 0 && !pcts.includes(cap)) pcts.push(cap); pcts.sort((a, b) => a - b);
+    el.textContent = '参考：' + pcts.map(x => `按 ${x}% 约 ${n(x)} 股`).join('，');
+}
+function syncRuleTarget(){
+    const t = document.getElementById('addRuleTarget');
+    if (!t || t.dataset.touched === '1' || document.getElementById('addRuleType').value !== 'band') return;
+    t.value = document.getElementById(ADD_SHARES_ID).value;
+}
+const ADD_SHARES_ID = 'fShares';
+function ruleHintCtx(p){
+    const d = portfolioData;
+    if (!d || !d.accounts) return { per: 0, total: 0 };
+    const rate = (d.rateInfo && d.rateInfo.USD_CNY) || (d.exchangeRate && d.exchangeRate.USD_CNY) || 7;
+    const fx = cur => cur === 'USD' ? rate : cur === 'HKD' ? rate / 7.8 : 1;
+    let total = 0;
+    d.accounts.forEach(a => {
+        const m = fx(a.currency || 'CNY');
+        total += (Number(a.cash) || 0) * m;
+        (a.holdings || []).forEach(h => { total += ((h.marketValue || 0) + (h.pendingAmount || 0)) * m; });
+    });
+    let per = 0;
+    if (p === 'edit') {
+        const acc = d.accounts[parseInt(document.getElementById('editAi').value)];
+        const h = acc && acc.holdings[parseInt(document.getElementById('editHi').value)];
+        if (h) per = (h.currentPrice || h.costPrice || 0) * fx(acc.currency || 'CNY');
+    } else if (p === 'add') {
+        const acc = d.accounts[parseInt(document.getElementById('fAccount').value)];
+        const cost = parseFloat(document.getElementById('fCost').value);
+        per = cost > 0 ? cost * fx((acc && acc.currency) || 'CNY') : 0;
+    }
+    return { per, total };
+}
+
 
 function showAddHolding() {
     requireAuth(() => {
@@ -2204,7 +2261,7 @@ async function submitHolding() {
     const res = await fetch('/api/holding', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify(data) });
     if (res.status === 401) { authToken = ''; localStorage.removeItem('authToken'); alert('认证已过期，请重新操作'); closeModals(); return; }
     if (!res.ok) { alert('添加失败'); return; }
-    if (!rf.skip && rf.rule) await saveRule(data.holding.symbol, rf.rule);
+    if (!rf.skip && rf.rule) await saveRule(data.holding.symbol, rf.rule, rf.reason);
     closeModals();
     ['fSymbol','fName','fShares','fCost'].forEach(id => document.getElementById(id).value = '');
     await refreshPortfolioData();
@@ -2361,7 +2418,7 @@ async function submitEdit() {
     });
     if (res.status === 401) { authToken = ''; localStorage.removeItem('authToken'); alert('认证已过期，请重新操作'); closeModals(); return; }
     if (!res.ok) { alert('保存失败'); return; }
-    if (editRuleSym && !rf.skip && (rf.rule || editRuleOrig)) await saveRule(editRuleSym, rf.rule);
+    if (editRuleSym && !rf.skip && (rf.rule || editRuleOrig)) await saveRule(editRuleSym, rf.rule, rf.reason);
     closeModals();
     await refreshPortfolioData();
 }

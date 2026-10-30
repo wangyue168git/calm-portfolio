@@ -1440,10 +1440,21 @@ const server = http.createServer((req, res) => {
         }
         if (r.why) rule.why = String(r.why).slice(0, 200);
       }
+      const reason = String(args.reason || "").trim().slice(0, 200);
       const plan = JSON.parse(JSON.stringify(loadPlan() || {}));
       plan.channels = plan.channels || {};
       plan.channels.symbols = plan.channels.symbols || {};
+      const prev = plan.channels.symbols[sym] || null;
       if (rule) plan.channels.symbols[sym] = rule; else delete plan.channels.symbols[sym];
+      // 规则有变化就自动记一条 changelog(日期 + 改前改后 + 理由), 方便日后回看为什么改
+      const describe = (x) => !x ? "未设（按默认）" : x.type === "open" ? "一直可加" : x.type === "seal" ? "一直封仓"
+        : x.type === "band" ? `${x.openBelowPct}% 以下可加、${x.sealAtPct}% 封仓${x.targetShares ? `、目标 ${x.targetShares} 股` : ""}` : x.type;
+      if (describe(prev) !== describe(rule)) {
+        plan.changelog = Array.isArray(plan.changelog) ? plan.changelog : [];
+        const now = new Date();
+        plan.changelog.push({ version: `页面-${now.toISOString().slice(0, 10)}`, date: now.toISOString(),
+          changes: [`${sym}：${describe(prev)} → ${describe(rule)}`], reason, objections: [] });
+      }
       try {
         const tmp = PLAN_FILE + ".tmp";
         fs.writeFileSync(tmp, JSON.stringify(plan, null, 1) + "\n");

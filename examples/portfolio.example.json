@@ -3,15 +3,21 @@
   "exchangeRate": { "USD_CNY": 7.1 },
   "accounts": [
     {
-      "name": "IB", "currency": "USD", "cash": 300, "holdings": [
-        { "symbol": "VOO", "name": "标普500 VOO", "market": "nyse", "shares": 12, "costPrice": 480, "transactions": [{ "type": "sync", "shares": 12, "price": 480, "date": "2025-01-02T00:00:00.000Z" }] },
-        { "symbol": "QQQM", "name": "纳指100 QQQM", "market": "nasdaq", "shares": 20, "costPrice": 190, "transactions": [{ "type": "sync", "shares": 20, "price": 190, "date": "2025-01-02T00:00:00.000Z" }] },
-        { "symbol": "AAPL", "name": "苹果", "market": "nasdaq", "shares": 15, "costPrice": 210, "transactions": [{ "type": "sync", "shares": 15, "price": 210, "date": "2025-01-02T00:00:00.000Z" }] }
+      "name": "IB", "currency": "USD", "cash": 500, "holdings": [
+        { "symbol": "VOO", "name": "标普500 VOO", "market": "nyse", "shares": 30, "costPrice": 480, "transactions": [{ "type": "sync", "shares": 30, "price": 480, "date": "2025-01-02T00:00:00.000Z" }] },
+        { "symbol": "QQQM", "name": "纳指100 QQQM", "market": "nasdaq", "shares": 60, "costPrice": 190, "transactions": [{ "type": "sync", "shares": 60, "price": 190, "date": "2025-01-02T00:00:00.000Z" }] },
+        { "symbol": "AAPL", "name": "苹果", "market": "nasdaq", "shares": 12, "costPrice": 210, "transactions": [{ "type": "sync", "shares": 12, "price": 210, "date": "2025-01-02T00:00:00.000Z" }] },
+        { "symbol": "MSFT", "name": "微软", "market": "nasdaq", "shares": 2, "costPrice": 420, "transactions": [{ "type": "sync", "shares": 2, "price": 420, "date": "2025-03-03T00:00:00.000Z" }] }
       ]
     },
     {
-      "name": "A股账户", "currency": "CNY", "cash": 2000, "holdings": [
-        { "symbol": "513500", "name": "标普500ETF", "market": "sh", "shares": 10000, "costPrice": 1.75, "transactions": [{ "type": "sync", "shares": 10000, "price": 1.75, "date": "2025-01-02T00:00:00.000Z" }] }
+      "name": "A股账户", "currency": "CNY", "cash": 3000, "holdings": [
+        { "symbol": "513500", "name": "标普500ETF", "market": "sh", "shares": 20000, "costPrice": 1.75, "transactions": [{ "type": "sync", "shares": 20000, "price": 1.75, "date": "2025-01-02T00:00:00.000Z" }] }
+      ]
+    },
+    {
+      "name": "加密货币", "currency": "USD", "cash": 0, "holdings": [
+        { "symbol": "ETH", "name": "以太坊", "market": "crypto", "shares": 0.5, "costPrice": 2500, "transactions": [{ "type": "sync", "shares": 0.5, "price": 2500, "date": "2025-02-03T00:00:00.000Z" }] }
       ]
     }
   ]
