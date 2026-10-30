@@ -11,7 +11,7 @@
     },
     {
       "name": "A股账户", "currency": "CNY", "cash": 2000, "holdings": [
-        { "symbol": "513650", "name": "标普500ETF", "market": "sh", "shares": 10000, "costPrice": 1.75, "transactions": [{ "type": "sync", "shares": 10000, "price": 1.75, "date": "2025-01-02T00:00:00.000Z" }] }
+        { "symbol": "513500", "name": "标普500ETF", "market": "sh", "shares": 10000, "costPrice": 1.75, "transactions": [{ "type": "sync", "shares": 10000, "price": 1.75, "date": "2025-01-02T00:00:00.000Z" }] }
       ]
     }
   ]

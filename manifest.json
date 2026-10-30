@@ -1,7 +1,7 @@
 {
   "name": "Calm Portfolio · 冷静持仓",
   "short_name": "冷静持仓",
-  "start_url": "/",
+  "start_url": "/m.html",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

@@ -1379,8 +1379,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if ((req.method === "GET" || req.method === "HEAD") && (urlObj.pathname === "/" || urlObj.pathname === "/index.html")) {
-    sendStatic(req, res, urlObj, "m.html", "text/html; charset=utf-8");
+  // 首页: 手机访问给手机页, 电脑访问给电脑页; 也可以直接打开 /m.html 或 /index.html
+  if ((req.method === "GET" || req.method === "HEAD") && urlObj.pathname === "/") {
+    const ua = String(req.headers["user-agent"] || "");
+    const mobile = /iPhone|iPod|Android.*Mobile|Mobile Safari|Windows Phone/i.test(ua);
+    sendStatic(req, res, urlObj, mobile ? "m.html" : "index.html", "text/html; charset=utf-8");
+    return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlObj.pathname === "/index.html") {
+    sendStatic(req, res, urlObj, "index.html", "text/html; charset=utf-8");
     return;
   }
 

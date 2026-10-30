@@ -5,7 +5,7 @@
 const NASDAQ_SYMBOLS = ['513100', 'QQQ', 'QQQM', 'QQQI', 'SCHG', 'TQQQ',
                         '161126', '000055', '270042', '016452', '021000', '019441'];
 // 标普500 系
-const SP500_SYMBOLS = ['513650', 'VOO', 'SPLG', 'SPY', 'IVV', '161125'];
+const SP500_SYMBOLS = ['513650', '513500', 'VOO', 'SPLG', 'SPY', 'IVV', '161125'];
 
 // 个人分组, 由 plan.json 的 groups 配置注入(见 configureGroups):
 //   warning = 警戒仓(主题/单赛道仓, 不加仓不抄底)

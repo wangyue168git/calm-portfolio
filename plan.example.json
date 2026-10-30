@@ -27,7 +27,7 @@
   "singleCapPct": 10
  },
  "channels": {
-  "_note": "持仓列表「可加/封仓」签的判断表。type: open 恒开 | seal 恒封 | band 看占比（< openBelowPct 可加, ≥ sealAtPct 封, 之间保持上次; 可选 targetShares 股数目标, 买够即封）| premium 看场内溢价（≤ maxPremiumPct 可加）| offshore 看境外账户总额是否到 offshoreTargetUSD。表外标的按 default 处理。",
+  "_note": "持仓列表「可加/封仓」签的判断表。type: open 恒开 | seal 恒封 | band 看占比（< openBelowPct 可加, ≥ sealAtPct 封, 之间保持上次; 可选 targetShares 股数目标, 买够即封）| premium 看场内溢价（≤ maxPremiumPct 可加）| offshore 看境外账户总额是否到 offshoreTargetUSD。表外标的按 default 处理。 observationCapPct = 占比 <5% 的小仓个股(观察仓)合计上限, 设了才在电脑版体检条显示。",
   "labels": {
    "open": "可加",
    "seal": "封仓"
@@ -64,12 +64,13 @@
     "targetShares": 20,
     "why": "示例个股：8% 以下可加，10% 封；目标 20 股"
    },
-   "513650": {
+   "513500": {
     "type": "premium",
     "maxPremiumPct": 3,
     "why": "示例：场内 ETF 溢价 ≤3% 才买"
    }
-  }
+  },
+  "observationCapPct": 5
  },
  "changelog": [
   {

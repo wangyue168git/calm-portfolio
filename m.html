@@ -14,9 +14,9 @@
 <meta name="apple-mobile-web-app-title" content="冷静持仓">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><!-- iOS26: default 模式下 env(safe-area-inset-top) 恒为0, translucent 才如实上报 -->
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="/tailwind.css?v=6">
+<link rel="stylesheet" href="/tailwind.css?v=7">
 <script src="/chart.umd.min.js"></script>
-<script src="/classify.js?v=15"></script>
+<script src="/classify.js?v=16"></script>
 <style>
     :root {
         color-scheme: light;
@@ -528,7 +528,7 @@
         <div style="opacity:.55"><span class="text-[9px] font-black uppercase" style="letter-spacing:0.6em;color:#94a3b8">Silent Meditation</span></div>
         <div class="flex flex-col gap-6">
             <h1 class="text-2xl font-light" style="letter-spacing:0.15em;color:#cbd5e1">你无法预测涨跌</h1>
-            <h1 class="text-5xl font-black italic text-transparent" style="background:linear-gradient(to right,#a5b4fc,#bfdbfe,#a5b4fc);-webkit-background-clip:text;background-clip:text;letter-spacing:-0.01em">Buy the dip</h1>
+            <h1 class="text-5xl font-black italic text-transparent" style="background:linear-gradient(to right,#a5b4fc,#bfdbfe,#a5b4fc);-webkit-background-clip:text;background-clip:text;letter-spacing:-0.01em">按计划定投</h1>
             <h1 class="text-2xl font-light" style="letter-spacing:0.15em;color:#cbd5e1">长期持有</h1>
         </div>
         <div class="flex flex-col items-center gap-2">
@@ -1300,6 +1300,7 @@ async function submitAuth(){
             authToken = data.token; try { localStorage.setItem('authToken', authToken); } catch (e) {}
             document.getElementById('authModal').classList.remove('show');
             const cb = pendingAuth; pendingAuth = null; if (cb) cb();
+            if (_loginWait) { const w = _loginWait; _loginWait = null; w.resolve(); }   // 取消过登录框时, 等待中的读取也在下次登录成功后继续
         } else {
             const err = document.getElementById('authError');
             err.textContent = data.error || '密码错误，请重试';
@@ -1961,10 +1962,10 @@ function renderDisciplineM(){
     const rate = rateOf(state);
     const mul = c => mulOf(c, rate);
 
-    // ① 计划执行卡: 在途申购(如有) + 指数定投纪律(QQQM/VOO 合计, 见 channels.indexPlan)执行状态——由本月 sync/buy 记录的股数增量 × 成交价 × 汇率 推算, 无需手动打卡
+    // ① 计划执行卡: 在途申购(如有) + 指数定投纪律(indexPlan.symbols 合计, 见 channels.indexPlan)执行状态——由本月 sync/buy 记录的股数增量 × 成交价 × 汇率 推算, 无需手动打卡
     const pendFunds = [];
     const idxHold = {};   // 指数定投候选持仓(symbol → {h, mul}), 候选名单读 plan.json channels.indexPlan.symbols
-    const idxSymsPre = (planDoc.channels && planDoc.channels.indexPlan && Array.isArray(planDoc.channels.indexPlan.symbols) && planDoc.channels.indexPlan.symbols.length) ? planDoc.channels.indexPlan.symbols : ['QQQM'];
+    const idxSymsPre = (planDoc.channels && planDoc.channels.indexPlan && Array.isArray(planDoc.channels.indexPlan.symbols) && planDoc.channels.indexPlan.symbols.length) ? planDoc.channels.indexPlan.symbols : ['VOO', 'QQQM'];
     (state.accounts || []).forEach(acc => (acc.holdings || []).forEach(h => {
         const accMul = mul(acc.currency || 'CNY');
         if (idxSymsPre.includes(h.symbol) && !idxHold[h.symbol]) idxHold[h.symbol] = { h, mul: accMul };
@@ -1980,10 +1981,10 @@ function renderDisciplineM(){
             last: confirmed[0] ? String(confirmed[0].confirmDate).slice(5, 10) : null,
         });
     }));
-    // 指数定投纪律: 读 plan.json channels.indexPlan —— symbols(QQQM/VOO)任选一只, 当月买入合计 ≥ passCNY 即 ✓, 目标 monthlyCNY; 境内指数基金不计入
+    // 指数定投纪律: 读 plan.json channels.indexPlan —— symbols 里任选一只, 当月买入合计 ≥ passCNY 即 ✓, 目标 monthlyCNY; 境内指数基金不计入
     const idxPlan = (planDoc.channels && planDoc.channels.indexPlan) || {};
-    const idxSyms = Array.isArray(idxPlan.symbols) && idxPlan.symbols.length ? idxPlan.symbols : ['QQQM'];
-    const monthlyTarget = Number(idxPlan.monthlyCNY) || 5000;
+    const idxSyms = Array.isArray(idxPlan.symbols) && idxPlan.symbols.length ? idxPlan.symbols : ['VOO', 'QQQM'];
+    const monthlyTarget = Number(idxPlan.monthlyCNY) || 2000;
     const passCNY = Number(idxPlan.passCNY) || monthlyTarget;
     const now = new Date(), ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     // 每只: 金额 = Σ Δ(成本价×股数) 或 buy 记录 股数×价; 只取本月
@@ -2053,7 +2054,7 @@ function renderDisciplineM(){
     const ta = planDoc.targetAllocation || {};
     const idxTarget = ta.indexTargetPct || ta.indexTarget || 60;
     const stockCap = ta.stockCapPct || (ta.targets && ta.targets['个股']) || 40;
-    const singleCap = ta.singleCapPct || 20;
+    const singleCap = ta.singleCapPct || 10;
     const sums = { '纳指': 0, '标普': 0, '个股': 0, '其他': 0 };
     let tot = 0;
     const stockCandidates = [];
