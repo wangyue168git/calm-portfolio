@@ -79,6 +79,8 @@ cp plan.example.json data/plan.json
 
 没写进表里的标的按 `default`（默认封仓）处理。思路是：**想买什么，先把规则写下来。**
 
+`open` / `seal` / `band` 三种也可以直接在页面上设：添加或修改持仓时，弹窗底部有「买入规则（可选）」，保存后写进 `data/plan.json`。溢价、境外这两种仍需在文件里改。
+
 改完保存即可生效，不用重启。
 
 ## Interactive Brokers 自动同步（可选）

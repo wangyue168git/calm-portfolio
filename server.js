@@ -1412,6 +1412,49 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // API: 设置/删除单只标的的买入规则(写 DATA_DIR/plan.json; 首次写入时以示例规则为底)
+  // body: { symbol, rule }  rule=null 删除; rule={ type: open|seal|band, openBelowPct, sealAtPct, targetShares?, why? }
+  if (urlObj.pathname === "/api/plan/symbol" && req.method === "PUT") {
+    if (!checkAuth(req)) { res.writeHead(401); res.end("Unauthorized"); return; }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 8192) req.destroy(); });
+    req.on("end", () => {
+      let args;
+      try { args = JSON.parse(body || "{}"); } catch { res.writeHead(400); res.end("请求格式错误"); return; }
+      const sym = String(args.symbol || "").trim().toUpperCase();
+      if (!/^[A-Z0-9.\-]{1,15}$/.test(sym)) { res.writeHead(400); res.end("标的代码不合法"); return; }
+      let rule = null;
+      if (args.rule !== null && args.rule !== undefined) {
+        const r = args.rule, type = String(r.type || "");
+        if (!["open", "seal", "band"].includes(type)) { res.writeHead(400); res.end("规则类型只能是 open / seal / band"); return; }
+        rule = { type };
+        if (type === "band") {
+          const lo = Number(r.openBelowPct), hi = Number(r.sealAtPct);
+          if (!(lo >= 0 && lo <= 100 && hi > 0 && hi <= 100 && lo <= hi)) { res.writeHead(400); res.end("占比需在 0–100 之间, 且「可加」不高于「封仓」"); return; }
+          rule.openBelowPct = lo; rule.sealAtPct = hi;
+          if (r.targetShares !== undefined && r.targetShares !== null && r.targetShares !== "") {
+            const t = Number(r.targetShares);
+            if (!(t > 0)) { res.writeHead(400); res.end("目标股数需大于 0"); return; }
+            rule.targetShares = t;
+          }
+        }
+        if (r.why) rule.why = String(r.why).slice(0, 200);
+      }
+      const plan = JSON.parse(JSON.stringify(loadPlan() || {}));
+      plan.channels = plan.channels || {};
+      plan.channels.symbols = plan.channels.symbols || {};
+      if (rule) plan.channels.symbols[sym] = rule; else delete plan.channels.symbols[sym];
+      try {
+        const tmp = PLAN_FILE + ".tmp";
+        fs.writeFileSync(tmp, JSON.stringify(plan, null, 1) + "\n");
+        fs.renameSync(tmp, PLAN_FILE);
+      } catch (e) { res.writeHead(500, noStoreJsonHeaders); res.end(JSON.stringify({ ok: false, error: "规则保存失败" })); return; }
+      res.writeHead(200, noStoreJsonHeaders);
+      res.end(JSON.stringify({ ok: true, symbol: sym, rule }));
+    });
+    return;
+  }
+
   // API: get portfolio
   if (urlObj.pathname === "/api/portfolio" && req.method === "GET") {
     res.writeHead(200, noStoreJsonHeaders);

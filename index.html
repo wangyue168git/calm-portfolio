@@ -12,7 +12,7 @@
     <script>/* 防主题闪烁: CSS加载前先定class */(function(){var m=localStorage.getItem('themeMode')||'auto';if(m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark');})();</script>
     <!-- 本地化静态资源(原 cdn.tailwindcss.com 运行时 + jsdelivr chart.js): 摆脱 CDN 抖动,与 m.html 共用同一份 -->
     <!-- tailwind.css 重建: npx tailwindcss@3 -c tailwind.config.js -i tailwind.input.css -o tailwind.css --minify -->
-    <link rel="stylesheet" href="/tailwind.css?v=7"><!-- 改 tailwind.css 时三处版本号同步: index.html / m.html / sw.js -->
+    <link rel="stylesheet" href="/tailwind.css?v=8"><!-- 改 tailwind.css 时三处版本号同步: index.html / m.html / sw.js -->
     <script src="/chart.umd.min.js"></script>
     <script src="/classify.js?v=16"></script><!-- 改 classify.js 时三处版本号同步: index.html / m.html / sw.js -->
     <style>
@@ -604,6 +604,7 @@
                     </div>
                 </div>
             </div>
+            <div id="addRuleBox" class="mt-5"></div>
             <div class="flex gap-3 mt-6">
                 <button onclick="closeModals()" class="flex-1 border border-slate-200 text-slate-600 py-2.5 rounded-lg text-sm hover:bg-slate-50 transition">取消</button>
                 <button onclick="submitHolding()" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg text-sm hover:bg-indigo-700 transition font-medium">确认添加</button>
@@ -654,7 +655,7 @@
 
     <!-- 编辑持仓弹窗 -->
     <div id="editHoldingModal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center">
-        <div class="bg-white rounded-2xl shadow-xl p-8 w-[620px] max-w-[94vw] animate-[modalIn_.2s_ease]">
+        <div class="bg-white rounded-2xl shadow-xl p-8 w-[620px] max-w-[94vw] max-h-[92vh] overflow-y-auto animate-[modalIn_.2s_ease]">
             <h3 class="text-xl font-bold text-slate-800 mb-2" id="editTitle">编辑持仓</h3>
             <p class="text-sm text-slate-400 mb-6" id="editSubtitle"></p>
             <input type="hidden" id="editAi">
@@ -716,6 +717,7 @@
                     </div>
                 </div>
             </div>
+            <div id="editRuleBox" class="border border-slate-100 rounded-2xl p-4"></div>
             <div class="flex gap-3 mt-6">
                 <button onclick="closeModals()" class="flex-1 border border-slate-200 text-slate-600 py-2.5 rounded-lg text-sm hover:bg-slate-50 transition">取消</button>
                 <button onclick="submitEdit()" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg text-sm hover:bg-indigo-700 transition font-medium">保存校准</button>
@@ -1989,6 +1991,78 @@ function fmtW(v) {
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ---- Modals ----
+// ===== 买入规则（添加/编辑持仓弹窗里的可选项, 写进 plan.json channels.symbols） =====
+const RULE_INPUT = 'w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300';
+function ruleBoxHtml(p){
+    return `<div class="flex items-center justify-between mb-2"><h4 class="text-sm font-semibold text-slate-800">买入规则 <span class="font-normal text-slate-400">（可选）</span></h4><span class="text-xs text-slate-400">决定持仓旁的「可加 / 封仓」签</span></div>
+        <select id="${p}RuleType" onchange="onRuleTypeChange('${p}')" class="${RULE_INPUT}">
+            <option value="">不设（按默认）</option><option value="open">一直可加</option><option value="band">看占比</option><option value="seal">一直封仓</option>
+        </select>
+        <div id="${p}RuleBand" class="hidden mt-3">
+            <div class="flex gap-3">
+                <div class="flex-1"><label class="block text-xs text-slate-500 mb-1">占比低于 % 可加</label><input id="${p}RuleLo" type="number" step="any" class="${RULE_INPUT}" placeholder="8"></div>
+                <div class="flex-1"><label class="block text-xs text-slate-500 mb-1">占比到 % 封仓</label><input id="${p}RuleHi" type="number" step="any" class="${RULE_INPUT}" placeholder="10"></div>
+            </div>
+            <label class="block text-xs text-slate-500 mt-3 mb-1">目标股数（可选，买够即封仓）</label>
+            <input id="${p}RuleTarget" type="number" step="any" class="${RULE_INPUT}" placeholder="如 20">
+        </div>
+        <p id="${p}RuleNote" class="hidden text-xs text-slate-500 mt-2"></p>`;
+}
+function onRuleTypeChange(p){
+    document.getElementById(p + 'RuleBand').classList.toggle('hidden', document.getElementById(p + 'RuleType').value !== 'band');
+}
+function ruleOf(sym){
+    const map = (planDoc && planDoc.channels && planDoc.channels.symbols) || {};
+    return map[sym] || map[String(sym || '').toUpperCase()] || null;
+}
+// 把已有规则填进表单; 溢价/境外这类特殊规则不在弹窗里改
+function fillRuleForm(p, sym){
+    const rule = sym ? ruleOf(sym) : null;
+    const sel = document.getElementById(p + 'RuleType'), note = document.getElementById(p + 'RuleNote');
+    ['RuleLo', 'RuleHi', 'RuleTarget'].forEach(k => { document.getElementById(p + k).value = ''; });
+    sel.disabled = false; note.classList.add('hidden');
+    if (rule && !['open', 'seal', 'band'].includes(rule.type)) {
+        sel.value = ''; sel.disabled = true;
+        note.textContent = `这只标的使用「${rule.type}」规则，请在 plan.json 里修改`; note.classList.remove('hidden');
+    } else {
+        sel.value = rule ? rule.type : '';
+        if (rule && rule.type === 'band') {
+            document.getElementById(p + 'RuleLo').value = rule.openBelowPct ?? '';
+            document.getElementById(p + 'RuleHi').value = rule.sealAtPct ?? '';
+            document.getElementById(p + 'RuleTarget').value = rule.targetShares ?? '';
+        }
+    }
+    onRuleTypeChange(p);
+    return rule;
+}
+// 返回 { skip } 不改 | { rule: null } 删除 | { rule } 保存 | { error }
+function readRuleForm(p){
+    const sel = document.getElementById(p + 'RuleType');
+    if (sel.disabled) return { skip: true };
+    const type = sel.value;
+    if (!type) return { rule: null };
+    if (type !== 'band') return { rule: { type, why: type === 'open' ? '一直可加' : '一直封仓' } };
+    const lo = parseFloat(document.getElementById(p + 'RuleLo').value), hi = parseFloat(document.getElementById(p + 'RuleHi').value);
+    const tg = document.getElementById(p + 'RuleTarget').value.trim();
+    if (isNaN(lo) || isNaN(hi) || lo < 0 || hi > 100 || lo > hi) return { error: '占比填写有误：需在 0–100 之间，且「可加」不高于「封仓」' };
+    const rule = { type: 'band', openBelowPct: lo, sealAtPct: hi };
+    if (tg) { const n = parseFloat(tg); if (!(n > 0)) return { error: '目标股数需大于 0' }; rule.targetShares = n; }
+    rule.why = `${lo}% 以下可加，${hi}% 封仓` + (rule.targetShares ? `；目标 ${rule.targetShares} 股` : '');
+    return { rule };
+}
+async function saveRule(sym, rule){
+    const res = await fetch('/api/plan/symbol', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify({ symbol: sym, rule }) });
+    if (res.status === 401) { authToken = ''; localStorage.removeItem('authToken'); alert('认证已过期，请重新操作'); return false; }
+    if (!res.ok) { alert('规则保存失败：' + await res.text()); return false; }
+    try {
+        const p = await (await authedFetch('/plan.json?t=' + Date.now(), { cache: 'no-store' })).json();
+        planDoc = p; if (typeof configureGroups === 'function') configureGroups(p.groups);
+    } catch (e) {}
+    return true;
+}
+document.getElementById('addRuleBox').innerHTML = ruleBoxHtml('add');
+document.getElementById('editRuleBox').innerHTML = ruleBoxHtml('edit');
+
 function showAddHolding() {
     requireAuth(() => {
         const sel = document.getElementById('fAccount');
@@ -1998,6 +2072,7 @@ function showAddHolding() {
                 sel.innerHTML += `<option value="${i}">${esc(acc.name)}</option>`;
             });
         }
+        fillRuleForm('add', '');
         const modal = document.getElementById('addHoldingModal');
         modal.style.display = '';
         modal.classList.remove('hidden');
@@ -2124,9 +2199,12 @@ async function submitHolding() {
     if (!data.holding.symbol || !data.holding.name || !data.holding.shares) {
         alert('请填写完整信息'); return;
     }
+    const rf = readRuleForm('add');
+    if (rf.error) { alert(rf.error); return; }
     const res = await fetch('/api/holding', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify(data) });
     if (res.status === 401) { authToken = ''; localStorage.removeItem('authToken'); alert('认证已过期，请重新操作'); closeModals(); return; }
     if (!res.ok) { alert('添加失败'); return; }
+    if (!rf.skip && rf.rule) await saveRule(data.holding.symbol, rf.rule);
     closeModals();
     ['fSymbol','fName','fShares','fCost'].forEach(id => document.getElementById(id).value = '');
     await refreshPortfolioData();
@@ -2178,6 +2256,7 @@ function showEditHolding(ai, hi) {
         document.getElementById('editShares').value = h.shares;
         document.getElementById('editCost').value = h.costPrice;
         document.getElementById('editSubtitle').textContent = `${h.name} (${h.symbol})`;
+        editRuleSym = h.symbol; editRuleOrig = fillRuleForm('edit', h.symbol);
         document.getElementById('editCurrentShares').textContent = h.shares;
         document.getElementById('editCurrentCost').textContent = `${sym}${fmtN(h.costPrice)}`;
         document.getElementById('tradeDate').value = new Date().toISOString().slice(0, 10);
@@ -2264,6 +2343,7 @@ function deleteTrade(tradeIndex) {
     });
 }
 
+let editRuleSym = null, editRuleOrig = null;
 async function submitEdit() {
     const ai = parseInt(document.getElementById('editAi').value);
     const hi = parseInt(document.getElementById('editHi').value);
@@ -2272,6 +2352,8 @@ async function submitEdit() {
     if (isNaN(shares) || isNaN(costPrice) || shares <= 0 || costPrice <= 0) {
         alert('请输入有效的数量和成本价'); return;
     }
+    const rf = readRuleForm('edit');
+    if (rf.error) { alert(rf.error); return; }
     const res = await fetch('/api/holding', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
@@ -2279,6 +2361,7 @@ async function submitEdit() {
     });
     if (res.status === 401) { authToken = ''; localStorage.removeItem('authToken'); alert('认证已过期，请重新操作'); closeModals(); return; }
     if (!res.ok) { alert('保存失败'); return; }
+    if (editRuleSym && !rf.skip && (rf.rule || editRuleOrig)) await saveRule(editRuleSym, rf.rule);
     closeModals();
     await refreshPortfolioData();
 }

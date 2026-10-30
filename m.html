@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="冷静持仓">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><!-- iOS26: default 模式下 env(safe-area-inset-top) 恒为0, translucent 才如实上报 -->
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="/tailwind.css?v=7">
+<link rel="stylesheet" href="/tailwind.css?v=8">
 <script src="/chart.umd.min.js"></script>
 <script src="/classify.js?v=16"></script>
 <style>
@@ -398,6 +398,7 @@
         <input id="editShares" type="number" step="any" class="w-full bg-gray-100 rounded-2xl px-4 py-3.5 text-[16px] outline-none focus:ring-2 focus:ring-teal-300 mb-4">
         <label class="block text-[13px] font-bold text-gray-500 mb-1.5">成本价 (<span id="editCurSym">¥</span>)</label>
         <input id="editCost" type="number" step="any" class="w-full bg-gray-100 rounded-2xl px-4 py-3.5 text-[16px] outline-none focus:ring-2 focus:ring-teal-300">
+        <div id="editRuleBox" class="mt-4"></div>
         <button id="editFundBtn" onclick="openFundFromEdit()" class="hidden w-full mt-4 py-3.5 rounded-2xl bg-indigo-50 text-indigo-600 font-bold">🪙 基金申购 / 校准份额</button>
         <!-- IB 场外加数(看板某只股票另含 IB 之外的股数): 只在还有场外股数时出现, 处理一次后永久消失 -->
         <div id="editExtraBox" class="hidden mt-4 bg-amber-50 rounded-2xl px-4 py-3 text-[13px]">
@@ -461,6 +462,7 @@
                 <input id="addCost" type="number" step="any" class="w-full bg-gray-100 rounded-2xl px-4 py-3.5 text-[16px] outline-none focus:ring-2 focus:ring-teal-300" placeholder="150.00">
             </div>
         </div>
+        <div id="addRuleBox" class="mt-4"></div>
         <div class="flex gap-3 mt-6">
             <button onclick="closeAdd()" class="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-600 font-bold">取消</button>
             <button onclick="submitAdd()" class="flex-1 py-3.5 rounded-2xl bg-teal-500 text-white font-bold">添加</button>
@@ -550,7 +552,7 @@
 let state = null;
 let authToken = (() => { try { return localStorage.getItem('authToken') || ''; } catch (e) { return ''; } })();
 let pendingAuth = null;
-let editTarget = null; // { ai, hi }
+let editTarget = null, editRuleOrig = null; // { ai, hi }
 let chartRange = 'all';
 let equityChart = null, pieChart = null;
 let historyLoadedRange = null;
@@ -1387,6 +1389,78 @@ function detailOpenFund(){
     showFund(t.ai, t.hi);
 }
 
+// ===== 单只标的的买入规则(可选): 写进 plan.json 的 channels.symbols =====
+const RULE_INPUT = 'w-full bg-gray-100 rounded-2xl px-4 py-3 text-[15px] outline-none focus:ring-2 focus:ring-teal-300';
+function ruleBoxHtml(p){
+    return `<label class="block text-[13px] font-bold text-gray-500 mb-1.5">买入规则 <span class="font-normal text-gray-400">（可选）</span></label>
+        <select id="${p}RuleType" onchange="onRuleTypeChange('${p}')" class="${RULE_INPUT} appearance-none">
+            <option value="">不设（按默认）</option><option value="open">一直可加</option><option value="band">看占比</option><option value="seal">一直封仓</option>
+        </select>
+        <div id="${p}RuleBand" class="hidden mt-3">
+            <div class="flex gap-3">
+                <div class="flex-1"><label class="block text-[12px] text-gray-400 mb-1">占比低于 % 可加</label><input id="${p}RuleLo" type="number" step="any" class="${RULE_INPUT}" placeholder="8"></div>
+                <div class="flex-1"><label class="block text-[12px] text-gray-400 mb-1">占比到 % 封仓</label><input id="${p}RuleHi" type="number" step="any" class="${RULE_INPUT}" placeholder="10"></div>
+            </div>
+            <label class="block text-[12px] text-gray-400 mt-3 mb-1">目标股数（可选，买够即封仓）</label>
+            <input id="${p}RuleTarget" type="number" step="any" class="${RULE_INPUT}" placeholder="如 20">
+        </div>
+        <p id="${p}RuleNote" class="hidden text-[12px] text-gray-400 mt-2"></p>`;
+}
+function onRuleTypeChange(p){
+    document.getElementById(p + 'RuleBand').classList.toggle('hidden', document.getElementById(p + 'RuleType').value !== 'band');
+}
+function ruleOf(sym){
+    const map = (planDoc && planDoc.channels && planDoc.channels.symbols) || {};
+    return map[sym] || map[String(sym || '').toUpperCase()] || null;
+}
+// 把已有规则填进表单; 溢价/境外这类特殊规则不在弹窗里改
+function fillRuleForm(p, sym){
+    const rule = sym ? ruleOf(sym) : null;
+    const sel = document.getElementById(p + 'RuleType'), note = document.getElementById(p + 'RuleNote');
+    ['RuleLo', 'RuleHi', 'RuleTarget'].forEach(k => { document.getElementById(p + k).value = ''; });
+    sel.disabled = false; note.classList.add('hidden');
+    if (rule && !['open', 'seal', 'band'].includes(rule.type)) {
+        sel.value = ''; sel.disabled = true;
+        note.textContent = `这只标的使用「${rule.type}」规则，请在 plan.json 里修改`; note.classList.remove('hidden');
+    } else {
+        sel.value = rule ? rule.type : '';
+        if (rule && rule.type === 'band') {
+            document.getElementById(p + 'RuleLo').value = rule.openBelowPct ?? '';
+            document.getElementById(p + 'RuleHi').value = rule.sealAtPct ?? '';
+            document.getElementById(p + 'RuleTarget').value = rule.targetShares ?? '';
+        }
+    }
+    onRuleTypeChange(p);
+    return rule;
+}
+// 返回 { skip } 不改 | { rule: null } 删除 | { rule } 保存 | { error }
+function readRuleForm(p){
+    const sel = document.getElementById(p + 'RuleType');
+    if (sel.disabled) return { skip: true };
+    const type = sel.value;
+    if (!type) return { rule: null };
+    if (type !== 'band') return { rule: { type, why: type === 'open' ? '一直可加' : '一直封仓' } };
+    const lo = parseFloat(document.getElementById(p + 'RuleLo').value), hi = parseFloat(document.getElementById(p + 'RuleHi').value);
+    const tg = document.getElementById(p + 'RuleTarget').value.trim();
+    if (isNaN(lo) || isNaN(hi) || lo < 0 || hi > 100 || lo > hi) return { error: '占比填写有误：需在 0–100 之间，且「可加」不高于「封仓」' };
+    const rule = { type: 'band', openBelowPct: lo, sealAtPct: hi };
+    if (tg) { const n = parseFloat(tg); if (!(n > 0)) return { error: '目标股数需大于 0' }; rule.targetShares = n; }
+    rule.why = `${lo}% 以下可加，${hi}% 封仓` + (rule.targetShares ? `；目标 ${rule.targetShares} 股` : '');
+    return { rule };
+}
+async function saveRule(sym, rule){
+    const res = await fetch('/api/plan/symbol', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken }, body: JSON.stringify({ symbol: sym, rule }) });
+    if (res.status === 401) { authExpired(); return false; }
+    if (!res.ok) { alert('规则保存失败：' + await res.text()); return false; }
+    try {
+        const p = await (await authedFetch('/plan.json?t=' + Date.now(), { cache: 'no-store' })).json();
+        planDoc = p; if (typeof configureGroups === 'function') configureGroups(p.groups);
+    } catch (e) {}
+    return true;
+}
+document.getElementById('addRuleBox').innerHTML = ruleBoxHtml('add');
+document.getElementById('editRuleBox').innerHTML = ruleBoxHtml('edit');
+
 // ===== 修改持仓 =====
 function showEdit(ai, hi){
     requireAuth(() => {
@@ -1400,6 +1474,7 @@ function showEdit(ai, hi){
         document.getElementById('editShares').value = h.shares;
         document.getElementById('editCost').value = h.costPrice;
         document.getElementById('editFundBtn').classList.toggle('hidden', h.market !== 'fund');
+        editRuleOrig = fillRuleForm('edit', h.symbol);
         // 场外加数入口: 只有 IB 账户里、且服务端还登记着场外股数的那只才显示
         const ex = _ibStatus && _ibStatus.extras && acc.name === _ibStatus.account ? _ibStatus.extras[String(h.symbol || '').toUpperCase()] : null;
         document.getElementById('editExtraBox').classList.toggle('hidden', !ex);
@@ -1437,6 +1512,9 @@ async function submitEdit(){
     const shares = parseFloat(document.getElementById('editShares').value);
     const costPrice = parseFloat(document.getElementById('editCost').value);
     if (isNaN(shares) || isNaN(costPrice) || shares <= 0 || costPrice <= 0) { alert('请输入有效的数量和成本价'); return; }
+    const rf = readRuleForm('edit');
+    if (rf.error) { alert(rf.error); return; }
+    const editSym = state.accounts[editTarget.ai]?.holdings[editTarget.hi]?.symbol;
     const res = await fetch('/api/holding', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
@@ -1447,6 +1525,7 @@ async function submitEdit(){
     // 乐观更新本地，立即反映；服务器下次价格刷新(≤5s)会经 WS 推送权威数据
     const h = state.accounts[editTarget.ai]?.holdings[editTarget.hi];
     if (h) { h.shares = shares; h.costPrice = costPrice; h.marketValue = (h.currentPrice || 0) * shares; h.costValue = costPrice * shares; h.pnl = h.marketValue - h.costValue; }
+    if (editSym && !rf.skip && (rf.rule || editRuleOrig)) await saveRule(editSym, rf.rule);
     closeEdit();
     render();
 }
@@ -1624,6 +1703,7 @@ function showAdd(){
     requireAuth(() => {
         setAddType('us');
         ['addSymbol', 'addName', 'addShares', 'addCost'].forEach(id => document.getElementById(id).value = '');
+        fillRuleForm('add', '');
         document.getElementById('addModal').classList.add('show');
     });
 }
@@ -1663,6 +1743,8 @@ async function submitAdd(){
     const costPrice = parseFloat(document.getElementById('addCost').value);
     if (!symbol) { alert('请输入股票代码'); return; }
     if (isNaN(shares) || shares <= 0 || isNaN(costPrice) || costPrice <= 0) { alert('请输入有效的数量和成本价'); return; }
+    const rf = readRuleForm('add');
+    if (rf.error) { alert(rf.error); return; }
     const ai = await ensureAccountForType(addType);
     if (ai < 0) { alert('找不到「' + ({us:'美国',cn:'中国',fund:'基金',crypto:'加密'}[addType]) + '」对应的账户'); return; }
     // 沪市: 6开头股票(含688)、5开头基金/ETF、9开头B股; 其余(0/3股票、1基金、2B股)归深市
@@ -1680,6 +1762,7 @@ async function submitAdd(){
         if (!acc.holdings) acc.holdings = [];
         acc.holdings.push({ symbol, market, name, shares, costPrice, currentPrice: costPrice, marketValue: costPrice * shares, costValue: costPrice * shares, changePercent: 0, pnl: 0 });
     }
+    if (!rf.skip && rf.rule) await saveRule(symbol, rf.rule);
     closeAdd();
     render();
 }
